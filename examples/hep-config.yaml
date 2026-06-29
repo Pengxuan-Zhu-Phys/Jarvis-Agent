@@ -1,0 +1,12 @@
+run:
+  package: example-hep-package
+  mode: dry-run
+
+paths:
+  workdir: ./work
+  output: ./outputs
+
+model:
+  backend: mlx
+  name: mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit
+

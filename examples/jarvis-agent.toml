@@ -1,0 +1,32 @@
+[project]
+root = "/path/to/hep/package"
+name = "example-hep-package"
+
+[model]
+backend = "mlx"
+model = "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit"
+max_tokens = 2048
+temperature = 0.2
+
+[index]
+max_file_bytes = 200000
+include_extensions = [
+  ".py",
+  ".c",
+  ".cc",
+  ".cpp",
+  ".cxx",
+  ".h",
+  ".hpp",
+  ".hh",
+  ".yaml",
+  ".yml",
+  ".toml",
+  ".json",
+  ".md",
+  ".rst",
+  ".txt",
+  "CMakeLists.txt",
+  "Makefile",
+]
+

@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jarvis-agent"
+version = "0.1.0"
+description = "Local HEP assistant for package understanding, YAML configuration, and MLX-backed workflows."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "Jarvis Workshop" }]
+dependencies = []
+
+[project.optional-dependencies]
+yaml = ["PyYAML>=6.0"]
+tui = ["textual>=0.86"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+jarvis-agent = "jarvis_agent.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
