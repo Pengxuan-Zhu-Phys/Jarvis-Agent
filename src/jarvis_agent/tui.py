@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 import shlex
 
+from jarvis_agent.agent_actions import AGENT_SYSTEM_PROMPT, INDEX_ACTION_MARKER, detect_action_marker, detect_agent_action
 from jarvis_agent.branding import load_jarvis_branding
 from jarvis_agent.config import AVAILABLE_MODELS, AgentConfig
 from jarvis_agent.session import SessionStore
@@ -146,10 +147,30 @@ class TerminalUI:
             path = self._resolve_path(raw.removeprefix("/yaml ").strip())
             return TUIResponse(output=self.engine.review_yaml(path))
         if raw.startswith("/ask "):
-            return TUIResponse(output=self.engine.ask_model(raw.removeprefix("/ask ").strip()))
+            return self.dispatch_natural_language(raw.removeprefix("/ask ").strip())
         if raw.startswith("/"):
             return TUIResponse(output="Unknown command. Type /help.")
-        return TUIResponse(output=self.engine.ask_model(raw))
+        return self.dispatch_natural_language(raw)
+
+    def dispatch_natural_language(self, text: str) -> TUIResponse:
+        action = detect_agent_action(text)
+        if action == "index":
+            return TUIResponse(output=self.run_index_action("deterministic-intent"))
+        model_output = self.engine.ask_model(with_agent_system_prompt(text))
+        if detect_action_marker(model_output) == "index":
+            return TUIResponse(output=self.run_index_action("model-marker"))
+        return TUIResponse(output=model_output)
+
+    def run_index_action(self, trigger: str) -> str:
+        return "\n".join(
+            [
+                f"{INDEX_ACTION_MARKER}",
+                f"[action-log] source={trigger} action=index",
+                "正在执行项目索引，请稍候...",
+                "",
+                self.engine.index_summary(),
+            ]
+        )
 
     def _should_record(self, raw: str) -> bool:
         command = raw.split(maxsplit=1)[0] if raw else ""
@@ -214,3 +235,7 @@ def _limit_lines(lines: tuple[str, ...], max_lines: int) -> tuple[str, ...]:
     if len(lines) <= max_lines:
         return lines
     return (*lines[: max_lines - 1], f"... [{len(lines) - max_lines + 1} more Jarvis -v lines]")
+
+
+def with_agent_system_prompt(user_text: str) -> str:
+    return f"{AGENT_SYSTEM_PROMPT}\n\nUser: {user_text}"

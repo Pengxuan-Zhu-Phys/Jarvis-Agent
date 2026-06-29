@@ -67,6 +67,12 @@ def run_textual_ui(config: AgentConfig) -> int:
             color: #e6e8eb;
         }
 
+        Screen > .screen--selection {
+            background: #ffe45c;
+            color: #101216;
+            text-style: bold;
+        }
+
         #workspace {
             height: 1fr;
             padding: 1 2;

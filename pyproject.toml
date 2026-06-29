@@ -10,7 +10,11 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Proprietary" }
 authors = [{ name = "Jarvis Workshop" }]
-dependencies = []
+dependencies = [
+  "tree-sitter>=0.25",
+  "tree-sitter-python>=0.23",
+  "tree-sitter-cpp>=0.23",
+]
 
 [project.optional-dependencies]
 yaml = ["PyYAML>=6.0"]

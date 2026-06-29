@@ -5,6 +5,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 
 from jarvis_agent import textual_tui
+from jarvis_agent.agent_actions import INDEX_ACTION_MARKER, detect_agent_action
 from jarvis_agent.config import AVAILABLE_MODELS, AgentConfig, ModelConfig, ProjectConfig
 from jarvis_agent.session import SessionStore
 from jarvis_agent.tui import TerminalUI
@@ -14,9 +15,21 @@ from jarvis_agent.textual_tui import _compact_model_name, _compact_path, estimat
 class FakeEngine:
     def __init__(self) -> None:
         self.prompts: list[str] = []
+        self.model_response = ""
 
     def index_summary(self) -> str:
-        return "3 indexed files"
+        return (
+            "项目索引已完成。\n\n"
+            "Summary\n"
+            "- scanned files: 3\n"
+            "- updated files: 1\n"
+            "- unchanged files: 2\n"
+            "- removed files: 0\n"
+            "- symbols: 7\n"
+            "- references: 4\n"
+            "- elapsed: 0.10s\n"
+            "- cache: /tmp/hep-package/.jarvis/index/codebase_index.json"
+        )
 
     def explain_file_prompt(self, path: Path) -> str:
         return f"explain:{path.name}"
@@ -26,6 +39,8 @@ class FakeEngine:
 
     def ask_model(self, prompt: str) -> str:
         self.prompts.append(prompt)
+        if self.model_response:
+            return self.model_response
         return f"answer:{prompt}"
 
 
@@ -99,8 +114,46 @@ class TUITests(unittest.TestCase):
         with redirect_stdout(output):
             self.assertTrue(tui.handle("explain this package"))
 
-        self.assertEqual(engine.prompts, ["explain this package"])
-        self.assertIn("answer:explain this package", output.getvalue())
+        self.assertEqual(len(engine.prompts), 1)
+        self.assertIn("User: explain this package", engine.prompts[0])
+        self.assertIn("User: explain this package", output.getvalue())
+
+    def test_natural_language_index_intent_runs_index_action(self) -> None:
+        tui, engine = self.make_tui()
+
+        response = tui.dispatch("帮我把当前项目索引一下")
+
+        self.assertEqual(engine.prompts, [])
+        self.assertIn(INDEX_ACTION_MARKER, response.output)
+        self.assertIn("[action-log] source=deterministic-intent action=index", response.output)
+        self.assertIn("正在执行项目索引，请稍候", response.output)
+        self.assertIn("项目索引已完成", response.output)
+        self.assertIn("scanned files: 3", response.output)
+        self.assertIn(".jarvis/index/codebase_index.json", response.output)
+
+    def test_ask_index_intent_runs_index_action(self) -> None:
+        tui, engine = self.make_tui()
+
+        response = tui.dispatch("/ask 更新一下代码索引")
+
+        self.assertEqual(engine.prompts, [])
+        self.assertIn("[action-log] source=deterministic-intent action=index", response.output)
+        self.assertIn("updated files: 1", response.output)
+
+    def test_model_marker_index_action_logs_model_source(self) -> None:
+        tui, engine = self.make_tui()
+        engine.model_response = INDEX_ACTION_MARKER
+
+        response = tui.dispatch("please decide what to do")
+
+        self.assertEqual(len(engine.prompts), 1)
+        self.assertIn("[action-log] source=model-marker action=index", response.output)
+        self.assertIn("scanned files: 3", response.output)
+
+    def test_agent_action_detector_recognizes_index_phrases(self) -> None:
+        self.assertEqual(detect_agent_action("扫描一下这个项目的代码结构"), "index")
+        self.assertEqual(detect_agent_action("rebuild symbols"), "index")
+        self.assertIsNone(detect_agent_action("解释一下这个项目"))
 
     def test_slash_commands_dispatch(self) -> None:
         tui, _ = self.make_tui()
@@ -112,7 +165,7 @@ class TUITests(unittest.TestCase):
             self.assertTrue(tui.handle("/explain src/main.cpp"))
 
         text = output.getvalue()
-        self.assertIn("3 indexed files", text)
+        self.assertIn("scanned files: 3", text)
         self.assertIn("yaml:config.yaml", text)
         self.assertIn("explain:main.cpp", text)
 
@@ -122,7 +175,7 @@ class TUITests(unittest.TestCase):
 
         transcript = tui.dispatch("/resume latest").output
         self.assertIn("explain this package", transcript)
-        self.assertIn("answer:explain this package", transcript)
+        self.assertIn("User: explain this package", transcript)
 
     def test_textual_home_uses_round_dot_monitor(self) -> None:
         source = Path(textual_tui.__file__).read_text(encoding="utf-8")
@@ -152,6 +205,9 @@ class TUITests(unittest.TestCase):
         self.assertIn("auto_copy_selection", source)
         self.assertIn("copy_to_clipboard(selection)", source)
         self.assertIn("Copied selection", source)
+        self.assertIn("Screen > .screen--selection", source)
+        self.assertIn("background: #ffe45c;", source)
+        self.assertIn("color: #101216;", source)
         self.assertIn("render_turn_panel", source)
         self.assertIn("render_model_info", source)
         self.assertIn("Log(id=\"log\", highlight=False)", source)

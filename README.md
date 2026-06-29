@@ -51,7 +51,7 @@ Inside the TUI:
 - `/model N` or `/model HF_REPO` switches the active MLX model.
 - `/resume` lists saved sessions from `$HOME/.jarvis/sessions.jsonl`.
 - `/resume latest` or `/resume SESSION_ID` prints a saved transcript.
-- `/index` scans the configured project.
+- `/index` scans the configured project and writes `.jarvis/index/codebase_index.json`.
 - `/explain PATH` builds an explanation prompt for a source file.
 - `/yaml PATH` performs a lightweight YAML review.
 - `/ask PROMPT` sends a prompt to the configured model backend.
@@ -59,6 +59,8 @@ Inside the TUI:
 - `/quit` exits.
 
 Plain text without a leading slash is sent to the configured model as a chat prompt.
+
+Natural language index requests are handled as an agent action. Phrases like `帮我把当前项目索引一下`, `更新一下代码索引`, `scan project`, or `rebuild symbols` run the same incremental indexer as `/index` and return a structured summary.
 
 The Textual UI includes an interactive command picker. Type `/` to show available commands, press `Tab` to complete the highlighted command, use `Up`/`Down` to move through suggestions, and press `Enter` or click a row to run it. Completing `/model` opens the model picker; choose with `Up`/`Down` + `Enter`, click a model, or press `1`/`2`.
 
@@ -105,5 +107,5 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 
 - The MLX backend is a subprocess wrapper around `mlx_lm.generate`.
 - YAML parsing uses `PyYAML` if installed, otherwise falls back to structural text checks.
-- Project indexing is intentionally conservative and ignores build/cache/vendor-heavy directories.
+- Project indexing writes a JSON + in-memory cache under `.jarvis/index/codebase_index.json`, uses file hashes for incremental updates, and extracts Python/C++ symbols and identifier references with Tree-sitter.
 - Fine-tuning execution and dataset building are not automated yet; `lora-command` only prints a reviewable MLX-LM command.

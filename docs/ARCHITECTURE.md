@@ -23,7 +23,8 @@ Jarvis-Agent is split into narrow modules so the model backend, package analysis
 - TUI agent commands use slash prefixes such as `/index`, `/yaml`, and `/ask`; plain text is treated as model chat input.
 - Textual is an optional dependency; the CLI falls back to the plain terminal UI when it is unavailable.
 - Startup branding is loaded from `Jarvis -v` and the Jarvis-HEP `jarvishep/card/logo` asset when available.
-- The Textual startup splash is transient; `/version` replays the Jarvis-HEP version animation on demand.
+- The Textual home page is available through `/home`.
+- `/index` stores an inspectable JSON codebase cache under `.jarvis/index/codebase_index.json`; see `docs/CODEBASE_INDEX_DESIGN.md`.
 
 ## Near-Term Target
 
