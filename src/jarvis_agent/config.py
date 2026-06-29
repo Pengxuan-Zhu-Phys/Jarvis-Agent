@@ -7,6 +7,11 @@ import tomllib
 
 CONFIG_NAME = ".jarvis-agent.toml"
 DEFAULT_MODEL = "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit"
+JOSIEFIED_QWEN25_CODER_7B = "mlx-community/Josiefied-Qwen2.5-Coder-7B-Instruct-abliterated-v1-4bit"
+AVAILABLE_MODELS = (
+    DEFAULT_MODEL,
+    JOSIEFIED_QWEN25_CODER_7B,
+)
 
 
 @dataclass(frozen=True)
@@ -146,4 +151,3 @@ def write_default_config(path: Path, project_root: Path | None = None) -> None:
     if path.exists():
         raise FileExistsError(f"Config already exists: {path}")
     path.write_text(default_config_text(project_root), encoding="utf-8")
-

@@ -29,5 +29,4 @@ class WorkflowEngine:
         result = MLXBackend(self.config.model).generate(prompt)
         if result.returncode != 0:
             return f"Model command failed with exit code {result.returncode}.\n{result.stderr}"
-        return result.text
-
+        return result.display_text()

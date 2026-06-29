@@ -22,6 +22,8 @@ Jarvis-Agent is split into narrow modules so the model backend, package analysis
 - Prefer local, private execution by default.
 - TUI agent commands use slash prefixes such as `/index`, `/yaml`, and `/ask`; plain text is treated as model chat input.
 - Textual is an optional dependency; the CLI falls back to the plain terminal UI when it is unavailable.
+- Startup branding is loaded from `Jarvis -v` and the Jarvis-HEP `jarvishep/card/logo` asset when available.
+- The Textual startup splash is transient; `/version` replays the Jarvis-HEP version animation on demand.
 
 ## Near-Term Target
 
