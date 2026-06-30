@@ -1,15 +1,28 @@
 import io
+import os
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 from jarvis_agent import textual_tui
 from jarvis_agent.agent_actions import INDEX_ACTION_MARKER, detect_agent_action
-from jarvis_agent.config import AVAILABLE_MODELS, AgentConfig, ModelConfig, ProjectConfig
+from jarvis_agent.config import AVAILABLE_MODELS, AgentConfig, JARVIS_HOME_ENV, ModelConfig, ProjectConfig, compact_model_name, model_badge_name
 from jarvis_agent.session import SessionStore
 from jarvis_agent.tui import TerminalUI
-from jarvis_agent.textual_tui import _compact_model_name, _compact_path, estimate_context_tokens
+from jarvis_agent.textual_tui import (
+    _compact_middle_path,
+    _compact_path,
+    _format_token_count,
+    _home_relative_path,
+    _relative_time_label,
+    compact_metrics,
+    estimate_context_tokens,
+    split_output_metrics,
+    split_output_metrics_detail,
+)
 
 
 class FakeEngine:
@@ -46,6 +59,11 @@ class FakeEngine:
 
 class TUITests(unittest.TestCase):
     def make_tui(self) -> tuple[TerminalUI, FakeEngine]:
+        home_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(home_dir.cleanup)
+        env_patch = patch.dict(os.environ, {JARVIS_HOME_ENV: home_dir.name})
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
         config = AgentConfig(
             project=ProjectConfig(root=Path("/tmp/hep-package"), name="hep-package"),
             model=ModelConfig(model="local-model"),
@@ -188,15 +206,21 @@ class TUITests(unittest.TestCase):
         self.assertIn("width: 16;", source)
         self.assertIn("height: 8;", source)
         self.assertIn("content-align: left top;", source)
+        self.assertIn("margin-top: 3;", source)
+        self.assertIn("border: round #4f7cff;", source)
+        self.assertIn("border: round #303745;", source)
         self.assertNotIn("██[/]", source)
         self.assertIn("TEXT_GRADIENT_COLORS", source)
         self.assertIn("render_colored_version_lines", source)
         self.assertIn("render_home_panel", source)
         self.assertIn("COMMAND_CHOICES", source)
         self.assertIn("ListView(id=\"suggestions\")", source)
+        self.assertIn("ListView(id=\"turn-history\")", source)
         self.assertIn("on_input_changed", source)
         self.assertIn("on_key", source)
         self.assertIn("event.key == \"tab\"", source)
+        self.assertIn("set_prompt_value", source)
+        self.assertIn("prompt_input.cursor_position = len(value)", source)
         self.assertIn("event.key in {\"up\", \"down\"}", source)
         self.assertIn("choose_model_suggestion", source)
         self.assertIn("on_list_view_selected", source)
@@ -210,6 +234,83 @@ class TUITests(unittest.TestCase):
         self.assertIn("color: #101216;", source)
         self.assertIn("render_turn_panel", source)
         self.assertIn("render_model_info", source)
+        self.assertIn("model_badge_name", source)
+        self.assertIn("id=\"composer\"", source)
+        self.assertIn("border: round #6d5cae;", source)
+        self.assertIn("padding: 1 2 6 2;", source)
+        self.assertIn("layers: base popup composer;", source)
+        self.assertIn("dock: bottom;", source)
+        self.assertIn("layer: composer;", source)
+        self.assertIn("layer: popup;", source)
+        self.assertIn("margin: 0 2 3 2;", source)
+        self.assertIn("margin: 0 2 4 2;", source)
+        self.assertIn("#output-metrics", source)
+        self.assertIn("Static(\"\", id=\"output-metrics\")", source)
+        self.assertIn("margin: 0 5 6 2;", source)
+        self.assertIn("id=\"prompt-icon\"", source)
+        self.assertIn("Static(\"❱\", id=\"prompt-icon\")", source)
+        self.assertIn("border-subtitle-align: right;", source)
+        self.assertIn("border-subtitle-color: #8d93a1;", source)
+        self.assertIn("border-subtitle-background: transparent;", source)
+        self.assertIn("update_composer_caption", source)
+        self.assertIn("border_subtitle", source)
+        self.assertIn("#git-status-info", source)
+        self.assertIn("#repo-path-info", source)
+        self.assertIn("#repo-path-info:hover", source)
+        self.assertIn("copy_project_path", source)
+        self.assertIn("render_git_status_info", source)
+        self.assertIn("render_repo_path_info", source)
+        self.assertIn("repo_path_max_chars", source)
+        self.assertIn("update_repo_path_info", source)
+        self.assertIn("overlay: screen;", source)
+        self.assertIn("constrain: none inside;", source)
+        self.assertIn("position_suggestions", source)
+        self.assertIn("suggestions.styles.offset", source)
+        self.assertIn("#context-info", source)
+        self.assertIn("#todo-info", source)
+        self.assertIn("CONTEXT_LIMIT_TOKENS", source)
+        self.assertIn("render_repo_info", source)
+        self.assertIn("render_context_info", source)
+        self.assertIn("render_todo_info", source)
+        self.assertIn("toggle_todo_panel", source)
+        self.assertIn("TurnRecord", source)
+        self.assertIn("created_at", source)
+        self.assertIn("metrics: str", source)
+        self.assertIn("start_new_turn", source)
+        self.assertIn("reset_output_box", source)
+        self.assertIn("update_current_turn_output", source)
+        self.assertIn("refresh_history_panel", source)
+        self.assertIn("history.border_title = \" Turns \"", source)
+        self.assertIn("history_expanded", source)
+        self.assertIn("history_pinned", source)
+        self.assertIn("self.history_pinned = True", source)
+        self.assertIn("action_toggle_history", source)
+        self.assertIn("collapse_history", source)
+        self.assertIn("event.key == \"escape\"", source)
+        self.assertIn("(\"ctrl+h\", \"toggle_history\", \"History\")", source)
+        self.assertIn("_relative_time_label", source)
+        self.assertIn("_exact_time_label", source)
+        self.assertIn("exit_on_error=False", source)
+        self.assertIn("history.is_mounted", source)
+        self.assertIn("apply_history_selection", source)
+        self.assertIn("show_output_snapshot", source)
+        self.assertIn("split_output_metrics", source)
+        self.assertIn("split_output_metrics_detail", source)
+        self.assertIn("compact_metrics", source)
+        self.assertIn("set_output_metrics", source)
+        self.assertIn("update_output_metrics_caption", source)
+        self.assertIn("clear_output_metrics_caption", source)
+        self.assertIn("refresh_output_metrics_visibility", source)
+        self.assertIn("is_generation_active", source)
+        self.assertIn("History preview is paused", source)
+        self.assertIn("metrics_detail", source)
+        self.assertIn("set_chat_visible", source)
+        self.assertIn("tooltip", source)
+        self.assertIn("is_mouse_over", source)
+        self.assertIn("get_git_info", source)
+        self.assertIn("_home_relative_path", source)
+        self.assertIn("_compact_middle_path", source)
+        self.assertIn("_format_token_count", source)
         self.assertIn("Log(id=\"log\", highlight=False)", source)
         self.assertIn("show_horizontal_scrollbar = False", source)
         self.assertIn("scrollbar-size-horizontal: 0;", source)
@@ -232,7 +333,8 @@ class TUITests(unittest.TestCase):
         self.assertIn("/model", source)
         self.assertIn("/resume", source)
         self.assertIn("#topbar", source)
-        self.assertIn("#model-info", source)
+        self.assertNotIn("#model-info", source)
+        self.assertNotIn("query_one(\"#turn\", Static)", source)
 
     def test_estimate_context_tokens(self) -> None:
         self.assertEqual(estimate_context_tokens(""), 0)
@@ -240,5 +342,29 @@ class TUITests(unittest.TestCase):
         self.assertEqual(estimate_context_tokens("a" * 40), 10)
 
     def test_compact_display_helpers(self) -> None:
-        self.assertEqual(_compact_model_name("mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit"), "Qwen3-Coder-30B-A3B-Instruct-4bit")
+        self.assertEqual(compact_model_name("mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit"), "Qwen3-Coder-30B-A3B-Instruct-4bit")
+        self.assertEqual(model_badge_name("mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit"), "Qwen3 Coder 30B")
+        self.assertEqual(
+            model_badge_name("mlx-community/Josiefied-Qwen2.5-Coder-7B-Instruct-abliterated-v1-4bit"),
+            "Qwen2.5 Coder 7B",
+        )
+        self.assertEqual(_format_token_count(158_200), "158K")
+        self.assertEqual(_format_token_count(999), "999")
+        self.assertEqual(_compact_middle_path("~/Jarvis-Workshop/Jarvis-Examples/Eggbox", 24), "~/Jarvis-Worksh...Eggbox")
+        self.assertTrue(_home_relative_path(Path.home()).startswith("~"))
         self.assertTrue(_compact_path("/" + "a" * 80).startswith("..."))
+        metrics_text = (
+            "Hello!\n\n"
+            "[metrics] prompt: 424 tokens @ 390.93 tok/s | generation: 10 tokens @ 56.27 tok/s | context:\n"
+            " 434 tokens | peak memory: 4.81 GB"
+        )
+        body, metrics = split_output_metrics(metrics_text)
+        self.assertEqual(body, "Hello!")
+        self.assertEqual(metrics, "prompt 424 tok · gen 10 tok · ctx 434 tok · mem 4.81 GB")
+        body, metrics, detail = split_output_metrics_detail(metrics_text)
+        self.assertEqual(body, "Hello!")
+        self.assertEqual(metrics, "prompt 424 tok · gen 10 tok · ctx 434 tok · mem 4.81 GB")
+        self.assertIn("390.93 tok/s", detail)
+        self.assertEqual(compact_metrics("prompt: 12 tokens | context: 20 tokens"), "prompt 12 tok · ctx 20 tok")
+        self.assertEqual(_relative_time_label(time.time() - 65), "1 min")
+        self.assertEqual(_relative_time_label(time.time()), "now")

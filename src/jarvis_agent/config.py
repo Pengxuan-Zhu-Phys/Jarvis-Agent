@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+import json
+import os
 from pathlib import Path
 import tomllib
 
 
 CONFIG_NAME = ".jarvis-agent.toml"
+JARVIS_HOME_ENV = "JARVIS_HOME"
+AGENT_STATE_NAME = "agent_state.json"
 DEFAULT_MODEL = "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit"
 JOSIEFIED_QWEN25_CODER_7B = "mlx-community/Josiefied-Qwen2.5-Coder-7B-Instruct-abliterated-v1-4bit"
 AVAILABLE_MODELS = (
@@ -144,10 +148,105 @@ def load_config(path: Path | None = None, project_override: Path | None = None) 
         include_extensions=tuple(index_data.get("include_extensions", IndexConfig().include_extensions)),
         ignore_dirs=tuple(index_data.get("ignore_dirs", IndexConfig().ignore_dirs)),
     )
-    return AgentConfig(project=project, model=model, index=index)
+    config = apply_local_state(AgentConfig(project=project, model=model, index=index))
+    ensure_local_agent_state(config)
+    return config
 
 
 def write_default_config(path: Path, project_root: Path | None = None) -> None:
     if path.exists():
         raise FileExistsError(f"Config already exists: {path}")
     path.write_text(default_config_text(project_root), encoding="utf-8")
+
+
+def jarvis_home() -> Path:
+    configured = os.environ.get(JARVIS_HOME_ENV)
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home() / ".jarvis"
+
+
+def local_agent_state_path() -> Path:
+    return jarvis_home() / AGENT_STATE_NAME
+
+
+def load_local_state() -> dict:
+    path = local_agent_state_path()
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def apply_local_state(config: AgentConfig) -> AgentConfig:
+    state = load_local_state()
+    model_data = state.get("model", {})
+    if not isinstance(model_data, dict):
+        return config
+
+    model = config.model
+    try:
+        model = replace(
+            model,
+            backend=str(model_data.get("backend", model.backend)),
+            model=str(model_data.get("model", model.model)),
+            max_tokens=int(model_data.get("max_tokens", model.max_tokens)),
+            temperature=float(model_data.get("temperature", model.temperature)),
+        )
+    except (TypeError, ValueError):
+        return config
+    return replace(config, model=model)
+
+
+def ensure_local_agent_state(config: AgentConfig) -> Path:
+    return save_local_model_state(config)
+
+
+def save_local_model_state(config: AgentConfig) -> Path:
+    path = local_agent_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": "1.0",
+        "model": {
+            "backend": config.model.backend,
+            "model": config.model.model,
+            "max_tokens": config.model.max_tokens,
+            "temperature": config.model.temperature,
+            "display": model_badge_name(config.model.model),
+        },
+        "available_models": [
+            {
+                "backend": config.model.backend,
+                "model": model,
+                "display": model_badge_name(model),
+            }
+            for model in AVAILABLE_MODELS
+        ],
+        "display": {
+            "model_badge": f"{model_badge_name(config.model.model)} · {config.model.backend}",
+        },
+    }
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return path
+
+
+def model_badge_name(model: str) -> str:
+    name = model.rsplit("/", 1)[-1]
+    parts = name.replace("_", "-").split("-")
+    family = next((part for part in parts if part.startswith("Qwen")), "")
+    role = "Coder" if "Coder" in parts else ""
+    size = next((part for part in parts if part.endswith("B") and any(character.isdigit() for character in part)), "")
+    label = " ".join(part for part in (family, role, size) if part)
+    if label:
+        return label
+    return compact_model_name(model, max_chars=24)
+
+
+def compact_model_name(model: str, max_chars: int = 42) -> str:
+    tail = model.rsplit("/", 1)[-1]
+    if len(tail) <= max_chars:
+        return tail
+    return f"{tail[:max_chars - 1]}…"

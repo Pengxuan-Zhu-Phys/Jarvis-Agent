@@ -6,7 +6,7 @@ import shlex
 
 from jarvis_agent.agent_actions import AGENT_SYSTEM_PROMPT, INDEX_ACTION_MARKER, detect_action_marker, detect_agent_action
 from jarvis_agent.branding import load_jarvis_branding
-from jarvis_agent.config import AVAILABLE_MODELS, AgentConfig
+from jarvis_agent.config import AVAILABLE_MODELS, AgentConfig, save_local_model_state
 from jarvis_agent.session import SessionStore
 from jarvis_agent.workflows import WorkflowEngine
 
@@ -211,7 +211,8 @@ class TerminalUI:
         model = self._resolve_model_selector(selector)
         self.config = replace(self.config, model=replace(self.config.model, model=model))
         self.engine = WorkflowEngine(self.config)
-        return f"Switched model to {self.config.model.backend}:{model}"
+        state_path = save_local_model_state(self.config)
+        return f"Switched model to {self.config.model.backend}:{model}\nSaved model state to {state_path}"
 
     def _resolve_model_selector(self, selector: str) -> str:
         if selector.isdigit():
