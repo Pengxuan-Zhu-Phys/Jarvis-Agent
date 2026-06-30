@@ -9,6 +9,7 @@ import threading
 import time
 
 from rich.cells import cell_len
+from rich.text import Text
 
 from jarvis_agent.branding import TEXT_GRADIENT_COLORS
 from jarvis_agent.config import AVAILABLE_MODELS, AgentConfig, compact_model_name, model_badge_name
@@ -34,23 +35,46 @@ class TurnRecord:
     output: str = ""
     metrics: str = ""
     metrics_detail: str = ""
+    context_tokens: int | None = None
 
 
 def run_textual_ui(config: AgentConfig) -> int:
     try:
         from textual.app import App, ComposeResult
         from textual.containers import Horizontal, Vertical
-        from textual.widgets import Input, ListItem, ListView, Log, Static
+        from textual.widgets import ListItem, ListView, Log, Static, TextArea
     except ImportError as exc:  # pragma: no cover - depends on optional extra
         raise TextualUnavailable("Textual is not installed. Install with: pip install -e '.[tui]'") from exc
 
+    class PromptTextArea(TextArea):
+        async def _on_key(self, event) -> None:
+            if event.key == "shift+enter":
+                event.stop()
+                event.prevent_default()
+                self.insert("\n")
+                if hasattr(self.app, "update_composer_height"):
+                    self.app.update_composer_height()
+                return
+            if event.key == "enter":
+                event.stop()
+                event.prevent_default()
+                if hasattr(self.app, "suggestion_values") and self.app.suggestion_values:
+                    await self.app.apply_highlighted_suggestion(submit=True)
+                elif hasattr(self.app, "submit_prompt"):
+                    self.app.submit_prompt()
+                return
+            await super()._on_key(event)
+
     class JarvisAgentApp(App[None]):
-        CONTEXT_LIMIT_TOKENS = 200_000
+        CONTEXT_LIMIT_TOKENS = 2048
         HISTOGRAM_ROWS = 8
         HISTOGRAM_COLS = 4
         SPLASH_REVEAL_FRAMES = 8
         SPLASH_MONITOR_FRAMES = 18
         SPLASH_HOLD_FRAMES = 14
+        GHOST_TRACK_SPACES = 15
+        GHOST_WIDTH = 28
+        GHOST_CLOCK_WIDTH = 10
         LEFT_MONITOR_SERIES = (
             (1, 2, 1, 3, 2, 4, 1, 2),
             (2, 1, 3, 2, 4, 2, 3, 1),
@@ -68,7 +92,9 @@ def run_textual_ui(config: AgentConfig) -> int:
             (1, 2, 3, 4, 2, 3, 1, 4),
         )
         SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+        ARC_SPINNER_FRAMES = ("◜", "◟", "◞", "◝")
         RESPONSE_STREAM_SECONDS_PER_CHAR = 0.012
+        PROMPT_MAX_LINES = 5
         COMMAND_CHOICES = (
             ("/home", "open the Jarvis-Agent home page"),
             ("/model", "choose the active MLX model"),
@@ -91,7 +117,7 @@ def run_textual_ui(config: AgentConfig) -> int:
         }
 
         Screen > .screen--selection {
-            background: #ffe45c;
+            background: #F6D33E;
             color: #101216;
             text-style: bold;
         }
@@ -118,17 +144,18 @@ def run_textual_ui(config: AgentConfig) -> int:
         }
 
         #repo-path-info:hover {
-            background: #273349;
+            background: rgba(39, 51, 73, 0.3);
             color: #e6e8eb;
             text-style: bold;
         }
 
         #context-info {
-            width: auto;
-            min-width: 17;
+            width: 12;
+            min-width: 12;
             margin-left: 2;
             color: #ffe45c;
             content-align: right middle;
+            background: transparent;
         }
 
         #todo-info {
@@ -166,13 +193,32 @@ def run_textual_ui(config: AgentConfig) -> int:
             padding: 0 2;
         }
 
+        .history-row {
+            height: 1;
+            width: 100%;
+        }
+
+        .history-prompt {
+            height: 1;
+            width: 1fr;
+            overflow: hidden;
+        }
+
+        .history-time {
+            height: 1;
+            width: auto;
+            min-width: 6;
+            color: #6f7785;
+            content-align: right middle;
+        }
+
         #turn-history ListItem.--highlight {
-            background: #273349;
+            background: rgba(39, 51, 73, 0.3);
             color: #ffffff;
         }
 
         #turn-history ListItem:hover {
-            background: #273349;
+            background: rgba(39, 51, 73, 0.3);
             color: #ffffff;
         }
 
@@ -223,7 +269,30 @@ def run_textual_ui(config: AgentConfig) -> int:
         #output-metrics {
             width: auto;
             height: 1;
-            margin: 0 5 6 2;
+            margin: 0 0 6 0;
+            color: #8d93a1;
+            background: transparent;
+            dock: bottom;
+            layer: popup;
+            overlay: screen;
+            content-align: right middle;
+        }
+
+        #pacman-ghosts {
+            width: 28;
+            height: 1;
+            margin: 0 0 3 0;
+            background: transparent;
+            dock: bottom;
+            layer: popup;
+            overlay: screen;
+            content-align: left middle;
+        }
+
+        #ghost-clock {
+            width: 10;
+            height: 1;
+            margin: 0 0 3 0;
             color: #8d93a1;
             background: transparent;
             dock: bottom;
@@ -235,13 +304,14 @@ def run_textual_ui(config: AgentConfig) -> int:
         #suggestions {
             height: auto;
             max-height: 8;
+            width: 76;
             margin: 0 2 4 2;
-            border: tall #303745;
+            border: round #303745;
             background: transparent;
             dock: bottom;
             layer: popup;
             overlay: screen;
-            constrain: none inside;
+            constrain: inside inside;
         }
 
         #suggestions ListItem {
@@ -250,7 +320,7 @@ def run_textual_ui(config: AgentConfig) -> int:
         }
 
         #suggestions ListItem.--highlight {
-            background: #273349;
+            background: rgba(39, 51, 73, 0.3);
             color: #ffffff;
         }
 
@@ -261,6 +331,8 @@ def run_textual_ui(config: AgentConfig) -> int:
             padding: 0 0;
             border: none;
             background: transparent;
+            scrollbar-size-horizontal: 0;
+            scrollbar-size-vertical: 1;
         }
 
         #prompt-icon {
@@ -307,6 +379,7 @@ def run_textual_ui(config: AgentConfig) -> int:
             self.thinking_started_at: float | None = None
             self.thinking_prompt = ""
             self.thinking_context_tokens = 0
+            self.measured_context_tokens: int | None = None
             self.responding_started_at: float | None = None
             self.response_text = ""
             self.response_index = 0
@@ -320,6 +393,8 @@ def run_textual_ui(config: AgentConfig) -> int:
             self.copy_notice_until = 0.0
             self.suggestion_mode: str | None = None
             self.suggestion_values: list[str] = []
+            self.suggestion_start = 0
+            self.suggestion_end = 0
             self.todo_panel_open = False
             self.todo_items: list[str] = []
             self.turn_records: list[TurnRecord] = []
@@ -331,6 +406,7 @@ def run_textual_ui(config: AgentConfig) -> int:
             self.session_choices: list[str] = []
             self.output_metrics_text = ""
             self.output_metrics_detail = ""
+            self.ghost_frame = 0
 
         def compose(self) -> ComposeResult:
             yield Vertical(
@@ -353,11 +429,19 @@ def run_textual_ui(config: AgentConfig) -> int:
             )
             yield Static("", id="thinking")
             yield Static("", id="output-metrics")
+            yield Static("", id="pacman-ghosts")
+            yield Static("", id="ghost-clock")
             yield ListView(id="suggestions")
             yield Vertical(
                 Horizontal(
                     Static("❱", id="prompt-icon"),
-                    Input(placeholder="Ask Jarvis-Agent, or use /help, /home, /model, /resume, /index ...", id="prompt"),
+                    PromptTextArea(
+                        placeholder="Ask Jarvis-Agent, or use /help, /home, /model, /resume, /index ...",
+                        id="prompt",
+                        compact=True,
+                        show_line_numbers=False,
+                        soft_wrap=True,
+                    ),
                     id="prompt-row",
                 ),
                 id="composer",
@@ -371,22 +455,20 @@ def run_textual_ui(config: AgentConfig) -> int:
             self.update_topbar_status()
             self.hide_todo_panel()
             self.set_chat_visible(False)
-            self.query_one("#prompt", Input).focus()
+            self.query_one("#prompt", TextArea).focus()
+            self.update_composer_height()
             self.hide_suggestions()
             self.set_interval(0.12, self.animate_home)
             self.set_interval(0.10, self.update_thinking_status)
             self.set_interval(0.03, self.update_response_stream)
             self.set_interval(0.20, self.auto_copy_selection)
+            self.set_interval(0.20, self.update_context_info)
+            self.set_interval(0.35, self.animate_pacman_ghosts)
+            self.set_interval(1.0, self.update_ghost_clock)
             self.hide_thinking_status()
             self.clear_output_metrics_caption()
-
-        def on_input_submitted(self, event: Input.Submitted) -> None:
-            raw = event.value.strip()
-            event.input.value = ""
-            if not raw:
-                return
-            self.hide_suggestions()
-            self.process_raw(raw)
+            self.animate_pacman_ghosts()
+            self.update_ghost_clock()
 
         def process_raw(self, raw: str) -> None:
             log = self.query_one("#log", Log)
@@ -424,8 +506,11 @@ def run_textual_ui(config: AgentConfig) -> int:
                 self.exit()
             self.update_topbar_status()
 
-        async def on_input_changed(self, event: Input.Changed) -> None:
-            await self.refresh_suggestions(event.value)
+        async def on_text_area_changed(self, event: TextArea.Changed) -> None:
+            if event.text_area.id != "prompt":
+                return
+            self.update_composer_height()
+            await self.refresh_suggestions(event.text_area.text, self.prompt_cursor_index(event.text_area))
 
         def on_click(self, event) -> None:
             widget = getattr(event, "widget", None)
@@ -441,18 +526,22 @@ def run_textual_ui(config: AgentConfig) -> int:
         def on_resize(self) -> None:
             self.enforce_output_scrollbars()
             self.reflow_output()
+            self.update_composer_height()
             self.update_repo_path_info()
+            self.position_output_metrics_caption()
+            self.position_pacman_ghosts()
+            self.position_ghost_clock()
 
         async def on_key(self, event) -> None:
             if self.history_expanded and event.key == "escape":
                 event.prevent_default()
                 event.stop()
                 self.collapse_history()
-                self.query_one("#prompt", Input).focus()
+                self.query_one("#prompt", TextArea).focus()
                 return
             if self.thinking_started_at is not None:
                 return
-            prompt_input = self.query_one("#prompt", Input)
+            prompt_input = self.query_one("#prompt", TextArea)
             if event.key == "tab" and self.suggestion_values:
                 event.prevent_default()
                 event.stop()
@@ -473,6 +562,11 @@ def run_textual_ui(config: AgentConfig) -> int:
                 event.prevent_default()
                 event.stop()
                 await self.apply_highlighted_suggestion(submit=True)
+                return
+            if event.key == "enter":
+                event.prevent_default()
+                event.stop()
+                self.submit_prompt()
                 return
             if self.suggestion_mode == "models" and event.character and event.character.isdigit():
                 index = int(event.character) - 1
@@ -514,12 +608,15 @@ def run_textual_ui(config: AgentConfig) -> int:
             event.stop()
             await self.apply_suggestion(event.index, submit=True)
 
-        async def refresh_suggestions(self, value: str) -> None:
-            stripped = value.strip()
-            if not stripped.startswith("/"):
+        async def refresh_suggestions(self, value: str, cursor_position: int | None = None) -> None:
+            context = slash_suggestion_context(value, len(value) if cursor_position is None else cursor_position)
+            if context is None:
                 self.hide_suggestions()
                 return
-            if stripped == "/model" or stripped.startswith("/model "):
+            self.suggestion_start, self.suggestion_end, token = context
+            stripped = value.strip()
+            whole_token = value[: self.suggestion_start].strip() == "" and value[self.suggestion_end :].strip() == ""
+            if whole_token and (stripped == "/model" or stripped.startswith("/model ")):
                 selector = stripped.removeprefix("/model").strip()
                 if selector and not selector.isdigit():
                     self.hide_suggestions()
@@ -527,10 +624,7 @@ def run_textual_ui(config: AgentConfig) -> int:
                 initial_index = int(selector) - 1 if selector.isdigit() else 0
                 await self.show_model_suggestions(initial_index=initial_index)
                 return
-            if " " in stripped:
-                self.hide_suggestions()
-                return
-            matches = [(command, description) for command, description in self.COMMAND_CHOICES if command.startswith(stripped)]
+            matches = [(command, description) for command, description in self.COMMAND_CHOICES if command.startswith(token)]
             if not matches:
                 self.hide_suggestions()
                 return
@@ -555,6 +649,8 @@ def run_textual_ui(config: AgentConfig) -> int:
         def hide_suggestions(self) -> None:
             self.suggestion_mode = None
             self.suggestion_values = []
+            self.suggestion_start = 0
+            self.suggestion_end = 0
             suggestions = self.query_one("#suggestions", ListView)
             suggestions.styles.display = "none"
             suggestions.styles.offset = (0, 0)
@@ -562,6 +658,8 @@ def run_textual_ui(config: AgentConfig) -> int:
         def position_suggestions(self, value_count: int) -> None:
             suggestions = self.query_one("#suggestions", ListView)
             suggestions.styles.offset = (0, 0)
+            suggestions.styles.width = min(76, max(24, self.size.width - 4))
+            self.update_popup_margins()
 
         def move_suggestion(self, delta: int) -> None:
             suggestions = self.query_one("#suggestions", ListView)
@@ -582,39 +680,125 @@ def run_textual_ui(config: AgentConfig) -> int:
                 return
 
             command = self.suggestion_values[index]
-            prompt_input = self.query_one("#prompt", Input)
-            if command == "/model":
+            prompt_input = self.query_one("#prompt", TextArea)
+            embedded = not self.suggestion_covers_whole_input(prompt_input.text)
+            if command == "/model" and not embedded:
                 self.set_prompt_value(prompt_input, "/model ")
                 prompt_input.focus()
                 await self.show_model_suggestions()
                 return
             if not submit:
                 value = f"{command} " if command in self.ARG_COMMANDS else command
-                self.set_prompt_value(prompt_input, value)
+                self.replace_suggestion_token(prompt_input, value)
                 prompt_input.focus()
                 self.hide_suggestions()
                 return
+            if embedded:
+                self.replace_suggestion_token(prompt_input, command)
+                self.hide_suggestions()
+                raw = prompt_input.text.strip()
+                self.clear_prompt(prompt_input)
+                self.process_raw(raw)
+                return
             self.hide_suggestions()
-            prompt_input.value = ""
+            self.clear_prompt(prompt_input)
             self.process_raw(command)
+
+        def suggestion_covers_whole_input(self, value: str) -> bool:
+            if not value:
+                return True
+            return value[: self.suggestion_start].strip() == "" and value[self.suggestion_end :].strip() == ""
+
+        def replace_suggestion_token(self, prompt_input: TextArea, replacement: str) -> None:
+            value = prompt_input.text
+            start = max(0, min(self.suggestion_start, len(value)))
+            end = max(start, min(self.suggestion_end, len(value)))
+            new_value = f"{value[:start]}{replacement}{value[end:]}"
+            self.set_prompt_value(prompt_input, new_value, cursor_index=start + len(replacement))
 
         async def choose_model_suggestion(self, index: int) -> None:
             model_number = index + 1
             self.hide_suggestions()
-            prompt_input = self.query_one("#prompt", Input)
-            prompt_input.value = ""
+            prompt_input = self.query_one("#prompt", TextArea)
+            self.clear_prompt(prompt_input)
             self.process_raw(f"/model {model_number}")
 
-        def set_prompt_value(self, prompt_input: Input, value: str) -> None:
-            prompt_input.value = value
-            prompt_input.cursor_position = len(value)
+        def submit_prompt(self) -> None:
+            prompt_input = self.query_one("#prompt", TextArea)
+            raw = prompt_input.text.strip()
+            if not raw:
+                self.clear_prompt(prompt_input)
+                return
+            self.hide_suggestions()
+            self.clear_prompt(prompt_input)
+            self.process_raw(raw)
+
+        def clear_prompt(self, prompt_input: TextArea) -> None:
+            self.set_prompt_value(prompt_input, "")
+
+        def set_prompt_value(self, prompt_input: TextArea, value: str, cursor_index: int | None = None) -> None:
+            prompt_input.load_text(value)
+            prompt_input.move_cursor(text_index_to_location(value, len(value) if cursor_index is None else cursor_index))
+            self.update_composer_height()
+
+        def prompt_cursor_index(self, prompt_input: TextArea) -> int:
+            return location_to_text_index(prompt_input.text, prompt_input.cursor_location)
+
+        def update_composer_height(self) -> None:
+            try:
+                prompt_input = self.query_one("#prompt", TextArea)
+                prompt_row = self.query_one("#prompt-row", Horizontal)
+                composer = self.query_one("#composer", Vertical)
+            except Exception:
+                return
+            total_lines = self.prompt_visual_line_count(prompt_input.text)
+            visible_lines = min(self.PROMPT_MAX_LINES, max(1, total_lines))
+            prompt_input.styles.height = visible_lines
+            prompt_row.styles.height = visible_lines
+            composer.styles.height = visible_lines + 2
+            prompt_input.show_vertical_scrollbar = total_lines > self.PROMPT_MAX_LINES
+            prompt_input.show_horizontal_scrollbar = False
+            prompt_input.styles.scrollbar_size_horizontal = 0
+            self.update_popup_margins()
+
+        def prompt_visual_line_count(self, text: str) -> int:
+            width = self.prompt_wrap_width()
+            lines = text.split("\n") if text else [""]
+            total = 0
+            for line in lines:
+                total += max(1, (cell_len(line) + width - 1) // width)
+            return total
+
+        def prompt_wrap_width(self) -> int:
+            try:
+                prompt_input = self.query_one("#prompt", TextArea)
+            except Exception:
+                return 72
+            width = prompt_input.content_size.width or prompt_input.size.width or 72
+            return max(8, width - 1)
+
+        def update_popup_margins(self) -> None:
+            try:
+                composer = self.query_one("#composer", Vertical)
+                suggestions = self.query_one("#suggestions", ListView)
+                thinking = self.query_one("#thinking", Static)
+                ghosts = self.query_one("#pacman-ghosts", Static)
+                clock = self.query_one("#ghost-clock", Static)
+            except Exception:
+                return
+            composer_height = composer.styles.height.value if hasattr(composer.styles.height, "value") else composer.size.height or 3
+            composer_height = int(composer_height or 3)
+            suggestions.styles.margin = (0, 2, composer_height + 1, 2)
+            thinking.styles.margin = (0, 2, composer_height, 2)
+            ghosts.styles.margin = (0, 0, composer_height, 0)
+            clock.styles.margin = (0, 0, composer_height, 0)
 
         def render_command_suggestion(self, command: str, description: str) -> str:
-            return f"[#aee4fc]{command:<10}[/] [#8d93a1]{_escape_markup(description)}[/]"
+            return f"[#aee4fc]{command:<10}[/] [#8d93a1]{_escape_markup(_single_line(description, max_chars=54))}[/]"
 
         def render_model_suggestion(self, index: int, model: str) -> str:
             marker = "current" if model == self.ui.config.model.model else "available"
-            return f"[#ffe45c]{index}[/]  {_escape_markup(compact_model_name(model, max_chars=64))}  [#8d93a1]{marker}[/]"
+            return f"[#ffe45c]{index}[/]  {_escape_markup(compact_model_name(model, max_chars=54))}  [#8d93a1]{marker}[/]"
 
         def action_clear_log(self) -> None:
             self.query_one("#log", Log).clear()
@@ -659,6 +843,7 @@ def run_textual_ui(config: AgentConfig) -> int:
             self.turn_records.append(TurnRecord(prompt=raw, timestamp=timestamp, created_at=time.time()))
             self.current_turn_index = len(self.turn_records) - 1
             self.history_mode = "turns"
+            self.measured_context_tokens = None
             self.reset_output_box(raw, timestamp)
             self.refresh_history_panel_later()
 
@@ -743,7 +928,22 @@ def run_textual_ui(config: AgentConfig) -> int:
             return item
 
         def history_record_item(self, index: int, record: TurnRecord) -> ListItem:
-            return self.history_item(self.render_history_record(index, record), tooltip=_exact_time_label(record.created_at))
+            tooltip = _exact_time_label(record.created_at)
+            row = self.history_record_row(index, record)
+            row.tooltip = tooltip
+            item = ListItem(row)
+            item.tooltip = tooltip
+            return item
+
+        def history_record_row(self, index: int, record: TurnRecord) -> Horizontal:
+            relative = _relative_time_label(record.created_at)
+            prompt_width = max(8, self.history_label_width() - cell_len(relative) - 4)
+            prompt = _single_line(record.prompt, max_chars=prompt_width)
+            return Horizontal(
+                Static(f"[#8d93a1]{index}[/]  {_escape_markup(prompt)}", classes="history-prompt"),
+                Static(relative, classes="history-time"),
+                classes="history-row",
+            )
 
         def render_history_record(self, index: int, record: TurnRecord) -> str:
             relative = _relative_time_label(record.created_at)
@@ -806,6 +1006,7 @@ def run_textual_ui(config: AgentConfig) -> int:
                 return
             record = self.turn_records[turn_index]
             self.current_turn_index = turn_index
+            self.measured_context_tokens = record.context_tokens
             self.show_output_snapshot(record.prompt, record.output or "(no output yet)", record.metrics, record.metrics_detail)
 
         def show_output_snapshot(self, title: str, output: str, metrics: str = "", metrics_detail: str = "") -> None:
@@ -835,7 +1036,7 @@ def run_textual_ui(config: AgentConfig) -> int:
             self.thinking_prompt = prompt
             self.thinking_context_tokens = estimate_context_tokens(prompt)
             self.spinner_index = 0
-            prompt_input = self.query_one("#prompt", Input)
+            prompt_input = self.query_one("#prompt", TextArea)
             prompt_input.disabled = True
             self.update_thinking_status()
             threading.Thread(target=self.run_llm_request, args=(raw,), daemon=True).start()
@@ -867,8 +1068,10 @@ def run_textual_ui(config: AgentConfig) -> int:
                 current_tokens = estimate_context_tokens(self.response_text[: self.response_index])
                 total_tokens = estimate_context_tokens(self.response_text)
                 tokens_per_second = current_tokens / elapsed if elapsed > 0 else 0.0
+                frame = self.ARC_SPINNER_FRAMES[self.spinner_index % len(self.ARC_SPINNER_FRAMES)]
+                self.spinner_index += 1
                 self.query_one("#thinking", Static).update(
-                    f"↳ Responding... {elapsed:.1f}s | ~{current_tokens}/{total_tokens} tokens | {tokens_per_second:.1f} tokens/sec"
+                    f"{frame} Responding... {elapsed:.1f}s | ~{current_tokens}/{total_tokens} tokens | {tokens_per_second:.1f} tokens/sec"
                 )
                 return
             if self.thinking_started_at is None:
@@ -906,18 +1109,23 @@ def run_textual_ui(config: AgentConfig) -> int:
         def set_output_metrics(self, metrics: str, metrics_detail: str = "") -> None:
             self.query_one("#log", Log).border_subtitle = ""
             self.update_output_metrics_caption(metrics, metrics_detail)
+            context_tokens = parse_context_metric_tokens(metrics_detail)
+            if context_tokens is not None:
+                self.measured_context_tokens = context_tokens
+                self.update_context_info()
             if self.current_turn_index is None:
                 return
             if not 0 <= self.current_turn_index < len(self.turn_records):
                 return
             self.turn_records[self.current_turn_index].metrics = metrics
             self.turn_records[self.current_turn_index].metrics_detail = metrics_detail
+            self.turn_records[self.current_turn_index].context_tokens = context_tokens
 
         def update_output_metrics_caption(self, metrics: str, metrics_detail: str = "") -> None:
             self.output_metrics_text = metrics
             self.output_metrics_detail = metrics_detail
             caption = self.query_one("#output-metrics", Static)
-            caption.update(f" {metrics} " if metrics else "")
+            caption.update(f" {self.output_metrics_display_text()} " if metrics else "")
             caption.tooltip = metrics_detail or None
             self.refresh_output_metrics_visibility()
 
@@ -928,6 +1136,51 @@ def run_textual_ui(config: AgentConfig) -> int:
             caption = self.query_one("#output-metrics", Static)
             log_visible = self.query_one("#log", Log).styles.display != "none"
             caption.styles.display = "block" if log_visible and self.output_metrics_text else "none"
+            self.position_output_metrics_caption()
+
+        def output_metrics_display_text(self) -> str:
+            max_chars = max(18, self.size.width - 12)
+            return _single_line(self.output_metrics_text, max_chars=max_chars)
+
+        def position_output_metrics_caption(self) -> None:
+            try:
+                caption = self.query_one("#output-metrics", Static)
+            except Exception:
+                return
+            text_width = cell_len(f" {self.output_metrics_display_text()} ") if self.output_metrics_text else 0
+            offset_x = max(2, self.size.width - text_width - 5) if text_width else 0
+            caption.styles.offset = (offset_x, 0)
+
+        def animate_pacman_ghosts(self) -> None:
+            self.ghost_frame += 1
+            ghosts = self.query_one("#pacman-ghosts", Static)
+            ghosts.update(self.render_pacman_ghosts())
+            self.position_pacman_ghosts()
+
+        def render_pacman_ghosts(self) -> str:
+            return pacman_ghost_frame(self.ghost_frame, max_spaces=self.GHOST_TRACK_SPACES)
+
+        def position_pacman_ghosts(self) -> None:
+            try:
+                ghosts = self.query_one("#pacman-ghosts", Static)
+            except Exception:
+                return
+            ghosts.styles.offset = (max(2, self.size.width - self.GHOST_WIDTH - self.GHOST_CLOCK_WIDTH - 6), 0)
+
+        def update_ghost_clock(self) -> None:
+            try:
+                clock = self.query_one("#ghost-clock", Static)
+            except Exception:
+                return
+            clock.update(current_time_label())
+            self.position_ghost_clock()
+
+        def position_ghost_clock(self) -> None:
+            try:
+                clock = self.query_one("#ghost-clock", Static)
+            except Exception:
+                return
+            clock.styles.offset = (max(2, self.size.width - self.GHOST_CLOCK_WIDTH - 5), 0)
 
         def update_response_stream(self) -> None:
             if self.responding_started_at is None or not self.response_text:
@@ -1005,7 +1258,7 @@ def run_textual_ui(config: AgentConfig) -> int:
             self.responding_started_at = None
             self.response_text = ""
             self.response_index = 0
-            prompt_input = self.query_one("#prompt", Input)
+            prompt_input = self.query_one("#prompt", TextArea)
             prompt_input.disabled = False
             prompt_input.focus()
             self.hide_thinking_status()
@@ -1056,8 +1309,31 @@ def run_textual_ui(config: AgentConfig) -> int:
         def update_repo_path_info(self) -> None:
             self.query_one("#repo-path-info", Static).update(self.render_repo_path_info())
 
-        def render_context_info(self) -> str:
-            return f"{_format_token_count(self.current_context_tokens())} / {_format_token_count(self.CONTEXT_LIMIT_TOKENS)}"
+        def render_context_info(self):
+            tokens = self.current_context_tokens()
+            context_info = self.query_one("#context-info", Static)
+            if context_info.is_mouse_over:
+                return self.render_context_progress(tokens)
+            label = f"{_format_token_count(tokens)} / {_format_token_count(self.CONTEXT_LIMIT_TOKENS)}"
+            return label.rjust(self.context_info_width())
+
+        def render_context_progress(self, tokens: int) -> Text:
+            width = self.context_info_width()
+            ratio = min(1.0, max(0.0, tokens / self.CONTEXT_LIMIT_TOKENS))
+            label = f"{ratio * 100:.2f}%"
+            text = Text(label.rjust(width), style="#e6e8eb")
+            progress_cells = min(width, round(width * ratio))
+            if progress_cells:
+                text.stylize("on #4A3F13", 0, progress_cells)
+            return text
+
+        def context_info_width(self) -> int:
+            try:
+                context_info = self.query_one("#context-info", Static)
+            except Exception:
+                return 12
+            width = context_info.content_size.width or context_info.size.width or 12
+            return max(12, width)
 
         def render_todo_info(self) -> str:
             done = 0
@@ -1079,19 +1355,22 @@ def run_textual_ui(config: AgentConfig) -> int:
             return "\n".join(lines)
 
         def current_context_tokens(self) -> int:
-            text = "\n".join(part for part in (self.output_raw_text, self.thinking_prompt, self.response_text) if part)
+            if self.measured_context_tokens is not None and not self.thinking_prompt:
+                return self.measured_context_tokens
+            text = "\n".join(part for part in (self.output_raw_text, self.thinking_prompt) if part)
             return estimate_context_tokens(text)
 
         def update_topbar_status(self) -> None:
-            tokens = self.current_context_tokens()
-            percent = (tokens / self.CONTEXT_LIMIT_TOKENS) * 100
-            context_info = self.query_one("#context-info", Static)
-            context_info.update(self.render_context_info())
-            context_info.tooltip = f"Context usage: {tokens:,} / {self.CONTEXT_LIMIT_TOKENS:,} tokens ({percent:.1f}%)"
+            self.update_context_info()
 
             todo_info = self.query_one("#todo-info", Static)
             todo_info.update(self.render_todo_info())
             todo_info.tooltip = "Click to show the Jarvis-Agent to-do list."
+
+        def update_context_info(self) -> None:
+            context_info = self.query_one("#context-info", Static)
+            context_info.update(self.render_context_info())
+            context_info.tooltip = None
 
         def toggle_todo_panel(self) -> None:
             self.todo_panel_open = not self.todo_panel_open
@@ -1302,7 +1581,11 @@ def _home_relative_path(path: Path) -> str:
 
 def _format_token_count(tokens: int) -> str:
     if tokens >= 1_000:
-        return f"{round(tokens / 1_000):.0f}K"
+        value = tokens / 1_000
+        if value < 100:
+            label = f"{value:.1f}".rstrip("0").rstrip(".")
+            return f"{label}K"
+        return f"{round(value):.0f}K"
     return str(tokens)
 
 
@@ -1311,6 +1594,56 @@ def _single_line(text: str, max_chars: int) -> str:
     if len(value) <= max_chars:
         return value
     return f"{value[:max_chars - 1]}…"
+
+
+def pacman_ghost_frame(frame: int, max_spaces: int = 15) -> str:
+    offset = ping_pong_offset(frame, max_spaces)
+    return f"{' ' * offset}👻 👻 👻"
+
+
+def ping_pong_offset(frame: int, max_value: int) -> int:
+    if max_value <= 0:
+        return 0
+    period = max_value * 2
+    position = frame % period
+    return position if position <= max_value else period - position
+
+
+def slash_suggestion_context(value: str, cursor_position: int) -> tuple[int, int, str] | None:
+    cursor = max(0, min(cursor_position, len(value)))
+    before_cursor = value[:cursor]
+    start = before_cursor.rfind("/")
+    if start < 0:
+        return None
+    token_prefix = before_cursor[start:cursor]
+    if not token_prefix.startswith("/") or any(character.isspace() for character in token_prefix):
+        return None
+    end = cursor
+    while end < len(value) and not value[end].isspace():
+        end += 1
+    return start, end, token_prefix
+
+
+def location_to_text_index(text: str, location: tuple[int, int]) -> int:
+    row, column = location
+    if row <= 0:
+        return max(0, min(column, len(text.split("\n", 1)[0])))
+    lines = text.split("\n")
+    row = max(0, min(row, len(lines) - 1))
+    index = sum(len(line) + 1 for line in lines[:row])
+    return min(len(text), index + max(0, min(column, len(lines[row]))))
+
+
+def text_index_to_location(text: str, index: int) -> tuple[int, int]:
+    index = max(0, min(index, len(text)))
+    row = 0
+    line_start = 0
+    while True:
+        newline = text.find("\n", line_start)
+        if newline < 0 or newline >= index:
+            return row, index - line_start
+        row += 1
+        line_start = newline + 1
 
 
 METRICS_RE = re.compile(r"\n*\[metrics\]\s*(?P<metrics>.*)\s*$", re.DOTALL)
@@ -1350,6 +1683,11 @@ def compact_metrics(metrics: str) -> str:
     if memory:
         parts.append(f"mem {memory} GB")
     return " · ".join(parts) if parts else metrics
+
+
+def parse_context_metric_tokens(metrics: str) -> int | None:
+    match = re.search(r"context:\s*(\d+)\s*tokens", metrics)
+    return int(match.group(1)) if match else None
 
 
 def _relative_time_label(created_at: float) -> str:
