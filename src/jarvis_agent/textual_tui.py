@@ -189,7 +189,7 @@ def run_textual_ui(config: AgentConfig) -> int:
         }
 
         #turn-history ListItem {
-            height: 1;
+            height: auto;
             padding: 0 2;
         }
 
@@ -202,6 +202,33 @@ def run_textual_ui(config: AgentConfig) -> int:
             height: 1;
             width: 1fr;
             overflow: hidden;
+        }
+
+        .history-toggle {
+            height: 1;
+            width: auto;
+            min-width: 4;
+            padding: 0 1;
+            background: rgba(19, 74, 141, 0.5);
+            color: #e6e8eb;
+            text-style: bold;
+        }
+
+        .history-index {
+            height: 1;
+            width: auto;
+            min-width: 4;
+            padding: 0 1;
+            color: #8d93a1;
+            text-style: bold;
+        }
+
+        .history-toggle-placeholder {
+            height: 1;
+            width: auto;
+            min-width: 4;
+            padding: 0 1;
+            color: transparent;
         }
 
         .history-time {
@@ -261,6 +288,15 @@ def run_textual_ui(config: AgentConfig) -> int:
             height: 1;
             margin: 0 2 3 2;
             color: #aee4fc;
+            dock: bottom;
+            layer: popup;
+            overlay: screen;
+        }
+
+        #notice {
+            height: 1;
+            margin: 0 2 4 2;
+            color: #ffe45c;
             dock: bottom;
             layer: popup;
             overlay: screen;
@@ -402,11 +438,14 @@ def run_textual_ui(config: AgentConfig) -> int:
             self.history_mode = "turns"
             self.history_expanded = False
             self.history_pinned = False
+            self.expanded_turn_prompts: set[int] = set()
+            self.suppress_next_history_selection = False
             self.pending_history_digit = ""
             self.session_choices: list[str] = []
             self.output_metrics_text = ""
             self.output_metrics_detail = ""
             self.ghost_frame = 0
+            self.notice_until = 0.0
 
         def compose(self) -> ComposeResult:
             yield Vertical(
@@ -427,6 +466,7 @@ def run_textual_ui(config: AgentConfig) -> int:
                 Log(id="log", highlight=False),
                 id="workspace",
             )
+            yield Static("", id="notice")
             yield Static("", id="thinking")
             yield Static("", id="output-metrics")
             yield Static("", id="pacman-ghosts")
@@ -515,6 +555,12 @@ def run_textual_ui(config: AgentConfig) -> int:
         def on_click(self, event) -> None:
             widget = getattr(event, "widget", None)
             widget_id = getattr(widget, "id", None)
+            widget_classes = set(getattr(widget, "classes", set()))
+            if "history-toggle" in widget_classes:
+                event.stop()
+                self.suppress_next_history_selection = True
+                self.toggle_history_prompt_by_turn_index(getattr(widget, "name", ""))
+                return
             if widget_id == "repo-path-info":
                 event.stop()
                 self.copy_project_path()
@@ -539,9 +585,24 @@ def run_textual_ui(config: AgentConfig) -> int:
                 self.collapse_history()
                 self.query_one("#prompt", TextArea).focus()
                 return
-            if self.thinking_started_at is not None:
-                return
             prompt_input = self.query_one("#prompt", TextArea)
+            if self.history_expanded and event.key in {"up", "down"}:
+                event.prevent_default()
+                event.stop()
+                self.move_history_selection(-1 if event.key == "up" else 1)
+                return
+            if self.history_expanded and event.character and event.character.isdigit():
+                event.prevent_default()
+                event.stop()
+                self.pending_history_digit += event.character
+                self.select_history_number()
+                return
+            if self.history_expanded and event.key == "enter":
+                event.prevent_default()
+                event.stop()
+                history = self.query_one("#turn-history", ListView)
+                await self.apply_history_selection(history.index or 0)
+                return
             if event.key == "tab" and self.suggestion_values:
                 event.prevent_default()
                 event.stop()
@@ -575,27 +636,13 @@ def run_textual_ui(config: AgentConfig) -> int:
                     event.stop()
                     await self.choose_model_suggestion(index)
                     return
-            if self.history_expanded and event.key in {"up", "down"}:
-                event.prevent_default()
-                event.stop()
-                self.move_history_selection(-1 if event.key == "up" else 1)
-                return
-            if self.history_expanded and event.character and event.character.isdigit():
-                event.prevent_default()
-                event.stop()
-                self.pending_history_digit += event.character
-                self.select_history_number()
-                return
-            if self.history_expanded and event.key == "enter":
-                event.prevent_default()
-                event.stop()
-                history = self.query_one("#turn-history", ListView)
-                await self.apply_history_selection(history.index or 0)
-                return
 
         async def on_list_view_selected(self, event: ListView.Selected) -> None:
             if event.list_view.id == "turn-history":
                 event.stop()
+                if self.suppress_next_history_selection:
+                    self.suppress_next_history_selection = False
+                    return
                 if self.history_mode == "turns" and not self.history_expanded:
                     self.history_pinned = True
                     self.history_expanded = True
@@ -729,6 +776,9 @@ def run_textual_ui(config: AgentConfig) -> int:
             if not raw:
                 self.clear_prompt(prompt_input)
                 return
+            if self.is_generation_active():
+                self.show_notice("↳ Model is busy. Finish the current response before submitting another prompt.")
+                return
             self.hide_suggestions()
             self.clear_prompt(prompt_input)
             self.process_raw(raw)
@@ -781,6 +831,7 @@ def run_textual_ui(config: AgentConfig) -> int:
             try:
                 composer = self.query_one("#composer", Vertical)
                 suggestions = self.query_one("#suggestions", ListView)
+                notice = self.query_one("#notice", Static)
                 thinking = self.query_one("#thinking", Static)
                 ghosts = self.query_one("#pacman-ghosts", Static)
                 clock = self.query_one("#ghost-clock", Static)
@@ -789,6 +840,7 @@ def run_textual_ui(config: AgentConfig) -> int:
             composer_height = composer.styles.height.value if hasattr(composer.styles.height, "value") else composer.size.height or 3
             composer_height = int(composer_height or 3)
             suggestions.styles.margin = (0, 2, composer_height + 1, 2)
+            notice.styles.margin = (0, 2, composer_height + 1, 2)
             thinking.styles.margin = (0, 2, composer_height, 2)
             ghosts.styles.margin = (0, 0, composer_height, 0)
             clock.styles.margin = (0, 0, composer_height, 0)
@@ -813,6 +865,7 @@ def run_textual_ui(config: AgentConfig) -> int:
         def collapse_history(self) -> None:
             self.history_pinned = False
             self.history_expanded = False
+            self.expanded_turn_prompts.clear()
             self.pending_history_digit = ""
             self.refresh_history_panel_later()
 
@@ -843,6 +896,7 @@ def run_textual_ui(config: AgentConfig) -> int:
             self.turn_records.append(TurnRecord(prompt=raw, timestamp=timestamp, created_at=time.time()))
             self.current_turn_index = len(self.turn_records) - 1
             self.history_mode = "turns"
+            self.expanded_turn_prompts.clear()
             self.measured_context_tokens = None
             self.reset_output_box(raw, timestamp)
             self.refresh_history_panel_later()
@@ -850,7 +904,7 @@ def run_textual_ui(config: AgentConfig) -> int:
         def reset_output_box(self, raw: str, timestamp: str) -> None:
             log = self.query_one("#log", Log)
             log.clear()
-            log.border_title = f" {raw} "
+            log.border_title = ""
             log.border_subtitle = ""
             self.clear_output_metrics_caption()
             self.reset_output_buffer()
@@ -907,7 +961,9 @@ def run_textual_ui(config: AgentConfig) -> int:
 
                 visible_records = list(enumerate(self.turn_records, start=1))
                 if not self.history_expanded and visible_records:
-                    visible_records = [visible_records[-1]]
+                    selected_index = self.current_turn_index if self.current_turn_index is not None else len(self.turn_records) - 1
+                    selected_index = max(0, min(selected_index, len(self.turn_records) - 1))
+                    visible_records = [(selected_index + 1, self.turn_records[selected_index])]
                 if not visible_records:
                     await history.append(self.history_item("[#8d93a1]No turns yet[/]"))
                     history.index = 0
@@ -929,32 +985,101 @@ def run_textual_ui(config: AgentConfig) -> int:
 
         def history_record_item(self, index: int, record: TurnRecord) -> ListItem:
             tooltip = _exact_time_label(record.created_at)
-            row = self.history_record_row(index, record)
+            expanded = index - 1 in self.expanded_turn_prompts
+            expandable = self.history_prompt_needs_expansion(record)
+            row = self.history_record_expanded(index, record) if expanded else self.history_record_row(index, record, expandable=expandable)
             row.tooltip = tooltip
             item = ListItem(row)
             item.tooltip = tooltip
             return item
 
-        def history_record_row(self, index: int, record: TurnRecord) -> Horizontal:
+        def history_record_row(self, index: int, record: TurnRecord, expandable: bool = False) -> Horizontal:
             relative = _relative_time_label(record.created_at)
-            prompt_width = max(8, self.history_label_width() - cell_len(relative) - 4)
-            prompt = _single_line(record.prompt, max_chars=prompt_width)
+            toggle = "▸" if expandable else " "
+            prompt_width = max(8, self.history_label_width() - cell_len(relative) - 10)
+            prompt = _single_line(record.prompt.replace("\n", " "), max_chars=prompt_width)
             return Horizontal(
-                Static(f"[#8d93a1]{index}[/]  {_escape_markup(prompt)}", classes="history-prompt"),
+                Static(
+                    self.history_toggle_label(index, expanded=False) if expandable else self.history_index_label(index),
+                    name=str(index - 1),
+                    classes="history-toggle" if expandable else "history-index",
+                ),
+                Static(_escape_markup(prompt), classes="history-prompt"),
                 Static(relative, classes="history-time"),
                 classes="history-row",
             )
 
-        def render_history_record(self, index: int, record: TurnRecord) -> str:
+        def history_record_expanded(self, index: int, record: TurnRecord) -> Vertical:
             relative = _relative_time_label(record.created_at)
             width = self.history_label_width()
-            prefix = f"{index}  "
+            prompt_width = max(8, width - cell_len(relative) - 10)
+            wrapped_lines = wrap_plain_text(record.prompt, prompt_width)
+            first_line = wrapped_lines[0] if wrapped_lines else ""
+            rows = [
+                Horizontal(
+                    Static(self.history_toggle_label(index, expanded=True), name=str(index - 1), classes="history-toggle"),
+                    Static(_escape_markup(first_line), classes="history-prompt"),
+                    Static(relative, classes="history-time"),
+                    classes="history-row",
+                )
+            ]
+            rows.extend(
+                Horizontal(
+                    Static(self.history_toggle_label(index, expanded=True), classes="history-toggle-placeholder"),
+                    Static(_escape_markup(line), classes="history-prompt"),
+                    classes="history-row",
+                )
+                for line in wrapped_lines[1:]
+            )
+            return Vertical(*rows)
+
+        def history_toggle_label(self, index: int, expanded: bool = False) -> str:
+            return ("▾" if expanded else "▸") + f" {index}"
+
+        def history_index_label(self, index: int) -> str:
+            return f"  {index}"
+
+        def toggle_history_prompt(self, visible_index: int) -> bool:
+            if self.history_mode != "turns":
+                return False
+            turn_index = self.visible_history_turn_index(visible_index)
+            if turn_index is None:
+                return False
+            return self.toggle_history_prompt_by_turn_index(turn_index)
+
+        def toggle_history_prompt_by_turn_index(self, turn_index_value) -> bool:
+            try:
+                turn_index = int(turn_index_value)
+            except (TypeError, ValueError):
+                return False
+            if not 0 <= turn_index < len(self.turn_records):
+                return False
+            if not self.history_prompt_needs_expansion(self.turn_records[turn_index]):
+                return False
+            if turn_index in self.expanded_turn_prompts:
+                self.expanded_turn_prompts.remove(turn_index)
+            else:
+                self.expanded_turn_prompts.add(turn_index)
+            self.refresh_history_panel_later()
+            return True
+
+        def history_prompt_needs_expansion(self, record: TurnRecord) -> bool:
+            width = self.history_label_width()
+            relative = _relative_time_label(record.created_at)
+            prefix = "▸ 1  "
             max_prompt_chars = max(8, width - cell_len(prefix) - cell_len(relative) - 2)
-            prompt = _single_line(record.prompt, max_chars=max_prompt_chars)
-            left = f"[#8d93a1]{index}[/]  {_escape_markup(prompt)}"
-            plain_left = f"{prefix}{prompt}"
-            spacing = max(1, width - cell_len(plain_left) - cell_len(relative))
-            return f"{left}{' ' * spacing}[#6f7785]{relative}[/]"
+            return "\n" in record.prompt or cell_len(record.prompt) > max_prompt_chars
+
+        def visible_history_turn_index(self, visible_index: int) -> int | None:
+            if not self.turn_records:
+                return None
+            if self.history_expanded:
+                turn_index = visible_index
+            else:
+                turn_index = self.current_turn_index if self.current_turn_index is not None else len(self.turn_records) - 1
+            if not 0 <= turn_index < len(self.turn_records):
+                return None
+            return turn_index
 
         def history_label_width(self) -> int:
             try:
@@ -1008,12 +1133,16 @@ def run_textual_ui(config: AgentConfig) -> int:
             self.current_turn_index = turn_index
             self.measured_context_tokens = record.context_tokens
             self.show_output_snapshot(record.prompt, record.output or "(no output yet)", record.metrics, record.metrics_detail)
+            self.history_pinned = False
+            self.history_expanded = False
+            self.expanded_turn_prompts.clear()
+            self.refresh_history_panel_later()
 
         def show_output_snapshot(self, title: str, output: str, metrics: str = "", metrics_detail: str = "") -> None:
             self.set_chat_visible(True)
             log = self.query_one("#log", Log)
             log.clear()
-            log.border_title = f" {title} "
+            log.border_title = ""
             log.border_subtitle = ""
             self.update_output_metrics_caption(metrics, metrics_detail)
             self.output_raw_text = output.rstrip() + "\n\n"
@@ -1036,8 +1165,6 @@ def run_textual_ui(config: AgentConfig) -> int:
             self.thinking_prompt = prompt
             self.thinking_context_tokens = estimate_context_tokens(prompt)
             self.spinner_index = 0
-            prompt_input = self.query_one("#prompt", TextArea)
-            prompt_input.disabled = True
             self.update_thinking_status()
             threading.Thread(target=self.run_llm_request, args=(raw,), daemon=True).start()
 
@@ -1063,6 +1190,7 @@ def run_textual_ui(config: AgentConfig) -> int:
                 self.finish_response_stream()
 
         def update_thinking_status(self) -> None:
+            self.update_notice_status()
             if self.responding_started_at is not None:
                 elapsed = time.monotonic() - self.responding_started_at
                 current_tokens = estimate_context_tokens(self.response_text[: self.response_index])
@@ -1088,6 +1216,15 @@ def run_textual_ui(config: AgentConfig) -> int:
 
         def hide_thinking_status(self) -> None:
             self.query_one("#thinking", Static).update("")
+
+        def show_notice(self, message: str, seconds: float = 2.0) -> None:
+            self.notice_until = time.monotonic() + seconds
+            self.query_one("#notice", Static).update(message)
+
+        def update_notice_status(self) -> None:
+            if self.notice_until and time.monotonic() > self.notice_until:
+                self.notice_until = 0.0
+                self.query_one("#notice", Static).update("")
 
         def write_output(self, output: str) -> None:
             body, metrics, metrics_detail = split_output_metrics_detail(output)
@@ -1259,7 +1396,6 @@ def run_textual_ui(config: AgentConfig) -> int:
             self.response_text = ""
             self.response_index = 0
             prompt_input = self.query_one("#prompt", TextArea)
-            prompt_input.disabled = False
             prompt_input.focus()
             self.hide_thinking_status()
             if not should_continue:
@@ -1416,6 +1552,7 @@ def run_textual_ui(config: AgentConfig) -> int:
             display = "block" if visible else "none"
             self.query_one("#turn-history", ListView).styles.display = display
             self.query_one("#log", Log).styles.display = display
+            self.query_one("#notice", Static).styles.display = display
             self.query_one("#thinking", Static).styles.display = display
             self.refresh_output_metrics_visibility()
 
@@ -1594,6 +1731,21 @@ def _single_line(text: str, max_chars: int) -> str:
     if len(value) <= max_chars:
         return value
     return f"{value[:max_chars - 1]}…"
+
+
+def wrap_plain_text(text: str, width: int) -> list[str]:
+    width = max(1, width)
+    lines: list[str] = []
+    for source_line in text.splitlines() or [""]:
+        current = ""
+        for character in source_line:
+            character_width = max(1, cell_len(character))
+            if current and cell_len(current) + character_width > width:
+                lines.append(current)
+                current = ""
+            current += character
+        lines.append(current)
+    return lines or [""]
 
 
 def pacman_ghost_frame(frame: int, max_spaces: int = 15) -> str:
