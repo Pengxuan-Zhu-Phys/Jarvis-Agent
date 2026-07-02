@@ -1,5 +1,7 @@
 # Fine-Tuning Data
 
+The system-level data-flywheel design (full-fidelity session retention → curation → training → capability internalization) lives in `docs/DESIGN.md` §9; this file remains the dataset-format and command manual.
+
 The first training path should be LoRA or DoRA adapter tuning through `mlx_lm.lora`.
 
 ## Dataset Shape

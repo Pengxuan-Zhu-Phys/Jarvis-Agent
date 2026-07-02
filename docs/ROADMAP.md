@@ -1,16 +1,35 @@
 # Roadmap
 
-## Phase 0: Runnable Skeleton
+Execution order is now driven by the milestones (M0–M6) in `docs/DESIGN.md` §10; the phases below remain as the original capability checklist (Phase 1/2/3 are absorbed by M2/M4/M1; Phase 4 is realized as the data flywheel, DESIGN §9 / milestone M6).
 
-- Python package scaffold.
-- CLI and TUI shell.
-- Textual workbench-style TUI with a plain terminal fallback.
-- Local config file.
-- MLX-LM subprocess backend.
-- Conservative project indexer.
-- Lightweight YAML reviewer.
-- Workflow engine interfaces.
-- Reviewable MLX-LM LoRA command generation.
+## Phase 0: Runnable Skeleton — done
+
+- [x] Python package scaffold.
+- [x] CLI and TUI shell.
+- [x] Textual workbench-style TUI with a plain terminal fallback (see `docs/TUI_DESIGN.md`).
+- [x] Local config file.
+- [x] MLX-LM subprocess backend.
+- [x] Conservative project indexer.
+- [x] Lightweight YAML reviewer.
+- [x] Workflow engine interfaces.
+- [x] Reviewable MLX-LM LoRA command generation.
+
+The TUI design is now feature-complete for the skeleton: home splash, slash/model
+pickers, turn history, context meter, simulated streaming, clipboard, and git /
+worktree awareness.
+
+## Phase 0.5: Consolidation (next)
+
+Engineering follow-ups surfaced while finishing the TUI:
+
+- Move the Textual `App` subclass to module scope so it can be imported and
+  unit-tested; replace the source-substring tests with behavioral ones.
+- Add a persistent, streaming model backend (e.g. `mlx_lm.server` or in-process
+  `mlx_lm`) so prompts stop cold-loading the model and the UI can stream real tokens.
+- Make reference indexing incremental (currently every `/index` re-parses every
+  source file) and set the context meter from the model's real context window.
+- Make `~/.jarvis/agent_state.json` an explicit override of the TOML, not a silent one.
+- Prune dead helpers in `textual_tui` and add a subprocess timeout to `MLXBackend`.
 
 ## Phase 1: HEP Package Understanding
 
