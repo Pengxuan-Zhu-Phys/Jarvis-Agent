@@ -1,0 +1,310 @@
+Screen {
+    background: transparent;
+    color: #e6e8eb;
+    layers: base popup composer;
+}
+
+Screen > .screen--selection {
+    background: #F6D33E;
+    color: #101216;
+    text-style: bold;
+}
+
+#workspace {
+    height: 1fr;
+    padding: 1 2 6 2;
+}
+
+#topbar {
+    height: 1;
+    color: #8d93a1;
+    text-style: bold;
+}
+
+#git-status-info {
+    width: auto;
+    color: #7d8492;
+}
+
+#repo-path-info {
+    width: 1fr;
+    color: #7d8492;
+}
+
+#repo-path-info:hover {
+    background: rgba(39, 51, 73, 0.3);
+    color: #e6e8eb;
+    text-style: bold;
+}
+
+#context-info {
+    width: 12;
+    min-width: 12;
+    margin-left: 2;
+    color: #ffe45c;
+    content-align: right middle;
+    background: transparent;
+}
+
+#todo-info {
+    width: auto;
+    min-width: 7;
+    margin-left: 2;
+    color: #c8d0da;
+    content-align: right middle;
+}
+
+#todo-panel {
+    height: auto;
+    margin-top: 1;
+    padding: 1 2;
+    border: round #303745;
+    background: transparent;
+    color: #c8d0da;
+}
+
+#turn-history {
+    height: auto;
+    max-height: 7;
+    margin-top: 1;
+    margin-bottom: 1;
+    border: round #303745;
+    background: transparent;
+    color: #e6e8eb;
+    border-title-align: left;
+    border-title-color: #b897ff;
+    border-title-background: transparent;
+}
+
+#turn-history ListItem {
+    height: auto;
+    padding: 0 2;
+}
+
+.history-row {
+    height: 1;
+    width: 100%;
+}
+
+.history-prompt {
+    height: 1;
+    width: 1fr;
+    overflow: hidden;
+}
+
+.history-toggle {
+    height: 1;
+    width: auto;
+    min-width: 4;
+    padding: 0 1;
+    background: rgba(19, 74, 141, 0.5);
+    color: #e6e8eb;
+    text-style: bold;
+}
+
+.history-index {
+    height: 1;
+    width: auto;
+    min-width: 4;
+    padding: 0 1;
+    color: #8d93a1;
+    text-style: bold;
+}
+
+.history-toggle-placeholder {
+    height: 1;
+    width: auto;
+    min-width: 4;
+    padding: 0 1;
+    color: transparent;
+}
+
+.history-time {
+    height: 1;
+    width: auto;
+    min-width: 6;
+    color: #6f7785;
+    content-align: right middle;
+}
+
+#turn-history ListItem.--highlight {
+    background: rgba(39, 51, 73, 0.3);
+    color: #ffffff;
+}
+
+#turn-history ListItem:hover {
+    background: rgba(39, 51, 73, 0.3);
+    color: #ffffff;
+}
+
+#hero {
+    height: auto;
+    min-height: 20;
+    padding: 1 2;
+    margin-top: 3;
+    margin-bottom: 1;
+    border: round #4f7cff;
+    background: transparent;
+    color: #f5f7fb;
+}
+
+#logo-monitor {
+    width: 16;
+    height: 8;
+    padding: 0 0;
+    content-align: left top;
+    color: #ffffff;
+}
+
+#home-panel {
+    width: 1fr;
+    padding: 0 2 1 2;
+}
+
+#log {
+    height: 1fr;
+    padding: 1 3;
+    border: round #303745;
+    background: transparent;
+    scrollbar-size-horizontal: 0;
+    border-subtitle-align: right;
+    border-subtitle-color: #8d93a1;
+    border-subtitle-background: transparent;
+}
+
+#thinking {
+    height: 1;
+    margin: 0 2 3 2;
+    color: #aee4fc;
+    dock: bottom;
+    layer: popup;
+    overlay: screen;
+}
+
+#notice {
+    height: 1;
+    margin: 0 2 4 2;
+    color: #ffe45c;
+    dock: bottom;
+    layer: popup;
+    overlay: screen;
+}
+
+#output-metrics {
+    width: auto;
+    height: 1;
+    margin: 0 0 6 0;
+    color: #8d93a1;
+    background: transparent;
+    dock: bottom;
+    layer: popup;
+    overlay: screen;
+    content-align: right middle;
+}
+
+#pacman-ghosts {
+    width: 28;
+    height: 1;
+    margin: 0 0 3 0;
+    background: transparent;
+    dock: bottom;
+    layer: popup;
+    overlay: screen;
+    content-align: left middle;
+}
+
+#run-control {
+    width: 28;
+    height: 1;
+    margin: 0 0 3 0;
+    color: #8d93a1;
+    background: transparent;
+    dock: bottom;
+    layer: popup;
+    overlay: screen;
+    content-align: right middle;
+}
+
+#token-counter {
+    width: 1fr;
+    height: 1;
+    color: #8d93a1;
+    content-align: right middle;
+}
+
+#stop-button {
+    width: auto;
+    min-width: 7;
+    height: 1;
+    padding-left: 1;
+    color: #134A8D;
+    text-style: none;
+    content-align: right middle;
+}
+
+#stop-button:hover {
+    color: #F6D33E;
+    text-style: bold;
+}
+
+#suggestions {
+    height: auto;
+    max-height: 8;
+    width: 76;
+    margin: 0 2 4 2;
+    border: round #303745;
+    background: transparent;
+    dock: bottom;
+    layer: popup;
+    overlay: screen;
+    constrain: inside inside;
+}
+
+#suggestions ListItem {
+    height: 1;
+    padding: 0 2;
+}
+
+#suggestions ListItem.--highlight {
+    background: rgba(39, 51, 73, 0.3);
+    color: #ffffff;
+}
+
+#prompt {
+    width: 1fr;
+    height: 1;
+    margin: 0;
+    padding: 0 0;
+    border: none;
+    background: transparent;
+    scrollbar-size-horizontal: 0;
+    scrollbar-size-vertical: 1;
+}
+
+#prompt-icon {
+    width: 3;
+    height: 1;
+    color: #d7b7ff;
+    text-style: bold;
+    content-align: center middle;
+}
+
+#prompt-row {
+    height: 1;
+    padding: 0 1;
+}
+
+#composer {
+    width: 100%;
+    height: 3;
+    margin: 0 2 0 2;
+    padding: 0 0;
+    border: round #6d5cae;
+    background: transparent;
+    dock: bottom;
+    layer: composer;
+    overlay: screen;
+    border-subtitle-align: right;
+    border-subtitle-color: #8d93a1;
+    border-subtitle-background: transparent;
+}
