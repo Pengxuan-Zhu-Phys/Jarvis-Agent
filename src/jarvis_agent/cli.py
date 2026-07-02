@@ -3,7 +3,14 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from jarvis_agent.config import CONFIG_NAME, load_config, write_default_config
+from jarvis_agent.config import (
+    CONFIG_NAME,
+    discover_mlx_models,
+    load_config,
+    local_available_models,
+    save_local_model_state_with_models,
+    write_default_config,
+)
 from jarvis_agent.tui import TerminalUI
 from jarvis_agent.textual_tui import TextualUnavailable, run_textual_ui
 from jarvis_agent.training import LoRAConfig, build_lora_command
@@ -37,6 +44,10 @@ def build_parser() -> argparse.ArgumentParser:
     ask = subparsers.add_parser("ask", help="Ask the configured model")
     ask.add_argument("prompt")
     ask.add_argument("--project", type=Path, help="Override configured project root")
+
+    models = subparsers.add_parser("models", help="List or scan local MLX-LM models")
+    models.add_argument("action", nargs="?", choices=["list", "scan"], default="list")
+    models.add_argument("--project", type=Path, help="Override configured project root")
 
     lora = subparsers.add_parser("lora-command", help="Print an MLX-LM LoRA training command")
     lora.add_argument("--model", default=None, help="Model path or Hugging Face repo")
@@ -89,6 +100,22 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "ask":
         print(engine.ask_model(args.prompt))
+        return 0
+    if args.command == "models":
+        if args.action == "scan":
+            models = discover_mlx_models()
+            state_path = save_local_model_state_with_models(config, models)
+            if models:
+                print(f"Discovered {len(models)} downloaded MLX-LM model(s):")
+                for index, model in enumerate(models, start=1):
+                    print(f"  {index}. {model}")
+            else:
+                print("No downloaded MLX-LM models were found in the Hugging Face cache.")
+            print(f"Saved global model state to {state_path}")
+            return 0
+        for index, model in enumerate(local_available_models((config.model.model,)), start=1):
+            marker = "*" if model == config.model.model else " "
+            print(f"{marker} {index}. {model}")
         return 0
     if args.command == "lora-command":
         lora_config = LoRAConfig(

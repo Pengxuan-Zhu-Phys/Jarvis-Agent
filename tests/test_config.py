@@ -6,7 +6,16 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-from jarvis_agent.config import AGENT_STATE_NAME, JARVIS_HOME_ENV, load_config, local_agent_state_path, save_local_model_state
+from jarvis_agent.config import (
+    AGENT_STATE_NAME,
+    JARVIS_HOME_ENV,
+    discover_mlx_models,
+    load_config,
+    local_agent_state_path,
+    local_available_models,
+    save_local_model_state,
+    save_local_model_state_with_models,
+)
 
 
 class ConfigTests(unittest.TestCase):
@@ -65,3 +74,22 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(data["model"]["display"], "model")
             self.assertEqual(data["display"]["model_badge"], "model · mlx")
             self.assertIn("available_models", data)
+
+    def test_save_local_model_state_preserves_discovered_models(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = load_config(path=None, project_override=Path(directory))
+            state_path = save_local_model_state_with_models(config, ["mlx-community/New-Coder-4bit"])
+            data = json.loads(state_path.read_text(encoding="utf-8"))
+
+            models = [item["model"] for item in data["available_models"]]
+            self.assertIn("mlx-community/New-Coder-4bit", models)
+            self.assertIn("mlx-community/New-Coder-4bit", local_available_models())
+
+    def test_discover_mlx_models_from_huggingface_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = root / "models--mlx-community--New-Coder-4bit" / "snapshots" / "abc123"
+            snapshot.mkdir(parents=True)
+            (snapshot / "config.json").write_text("{}", encoding="utf-8")
+
+            self.assertEqual(discover_mlx_models([root]), ("mlx-community/New-Coder-4bit",))

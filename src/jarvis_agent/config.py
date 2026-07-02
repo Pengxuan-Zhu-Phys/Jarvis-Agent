@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import tomllib
+from typing import Iterable
 
 
 CONFIG_NAME = ".jarvis-agent.toml"
@@ -206,8 +207,13 @@ def ensure_local_agent_state(config: AgentConfig) -> Path:
 
 
 def save_local_model_state(config: AgentConfig) -> Path:
+    return save_local_model_state_with_models(config)
+
+
+def save_local_model_state_with_models(config: AgentConfig, available_models: Iterable[str] = ()) -> Path:
     path = local_agent_state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    models = local_available_models((*available_models, config.model.model))
     payload = {
         "version": "1.0",
         "model": {
@@ -223,7 +229,7 @@ def save_local_model_state(config: AgentConfig) -> Path:
                 "model": model,
                 "display": model_badge_name(model),
             }
-            for model in AVAILABLE_MODELS
+            for model in models
         ],
         "display": {
             "model_badge": f"{model_badge_name(config.model.model)} · {config.model.backend}",
@@ -231,6 +237,76 @@ def save_local_model_state(config: AgentConfig) -> Path:
     }
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return path
+
+
+def local_available_models(extra_models: Iterable[str] = ()) -> tuple[str, ...]:
+    state = load_local_state()
+    state_models: list[str] = []
+    for item in state.get("available_models", []):
+        if isinstance(item, dict):
+            model = item.get("model")
+            if isinstance(model, str):
+                state_models.append(model)
+        elif isinstance(item, str):
+            state_models.append(item)
+    return _unique_models((*AVAILABLE_MODELS, *state_models, *extra_models))
+
+
+def discover_mlx_models(cache_roots: Iterable[Path] | None = None) -> tuple[str, ...]:
+    models: list[str] = []
+    for root in cache_roots or mlx_model_cache_roots():
+        if not root.exists():
+            continue
+        for path in root.glob("models--*"):
+            if not path.is_dir():
+                continue
+            if not _looks_like_hf_model_cache(path):
+                continue
+            models.append(_hf_cache_dir_to_repo_id(path.name))
+    return _unique_models(models)
+
+
+def mlx_model_cache_roots() -> tuple[Path, ...]:
+    roots: list[Path] = []
+    explicit_cache = os.environ.get("HUGGINGFACE_HUB_CACHE")
+    if explicit_cache:
+        roots.append(Path(explicit_cache).expanduser())
+    hf_home = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface")).expanduser()
+    roots.append(hf_home / "hub")
+    xdg_cache = os.environ.get("XDG_CACHE_HOME")
+    if xdg_cache:
+        roots.append(Path(xdg_cache).expanduser() / "huggingface" / "hub")
+    return tuple(dict.fromkeys(root.resolve() for root in roots))
+
+
+def _hf_cache_dir_to_repo_id(name: str) -> str:
+    return name.removeprefix("models--").replace("--", "/")
+
+
+def _looks_like_hf_model_cache(path: Path) -> bool:
+    snapshots = path / "snapshots"
+    if not snapshots.exists():
+        return False
+    for snapshot in snapshots.iterdir():
+        if not snapshot.is_dir():
+            continue
+        if (snapshot / "config.json").exists():
+            return True
+        if any(snapshot.glob("*.safetensors")):
+            return True
+    return False
+
+
+def _unique_models(models: Iterable[str]) -> tuple[str, ...]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for model in models:
+        value = str(model).strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        unique.append(value)
+    return tuple(unique)
 
 
 def model_badge_name(model: str) -> str:
