@@ -6,7 +6,7 @@ import shlex
 
 from jarvis_agent.agent_actions import AGENT_SYSTEM_PROMPT, INDEX_ACTION_MARKER, detect_action_marker, detect_agent_action
 from jarvis_agent.branding import load_jarvis_branding
-from jarvis_agent.config import AVAILABLE_MODELS, AgentConfig, save_local_model_state
+from jarvis_agent.config import AgentConfig, discover_mlx_models, local_available_models, save_local_model_state, save_local_model_state_with_models
 from jarvis_agent.session import SessionStore
 from jarvis_agent.workflows import WorkflowEngine
 
@@ -17,6 +17,7 @@ HELP = """Commands:
   /status           show project and model status
   /model            list available local models
   /model N|REPO     switch the active MLX model
+  /model scan       scan the local MLX/Hugging Face model cache
   /resume           list saved sessions
   /resume latest    show the latest saved session
   /index            index the configured project
@@ -111,13 +112,18 @@ class TerminalUI:
             print(response.output)
         return response.should_continue
 
-    def dispatch(self, raw: str) -> TUIResponse:
+    def dispatch(self, raw: str, *, record: bool = True) -> TUIResponse:
         response = self._dispatch(raw)
-        if self._should_record(raw):
-            self.session_store.append(self.session_id, "user", raw)
-            if response.output:
-                self.session_store.append(self.session_id, "assistant", response.output)
+        if record:
+            self.record_exchange(raw, response.output)
         return response
+
+    def record_exchange(self, raw: str, output: str = "") -> None:
+        if not self._should_record(raw):
+            return
+        self.session_store.append(self.session_id, "user", raw)
+        if output:
+            self.session_store.append(self.session_id, "assistant", output)
 
     def _dispatch(self, raw: str) -> TUIResponse:
         if raw in {"/quit", "/q", "/exit", "quit", "exit"}:
@@ -130,6 +136,8 @@ class TerminalUI:
             return TUIResponse(output=self.status())
         if raw == "/model":
             return TUIResponse(output=self.model_menu())
+        if raw == "/model scan":
+            return TUIResponse(output=self.scan_models())
         if raw.startswith("/model "):
             return TUIResponse(output=self.switch_model(raw.removeprefix("/model ").strip()))
         if raw == "/resume":
@@ -193,16 +201,37 @@ class TerminalUI:
 
     def model_menu(self) -> str:
         lines = ["Available MLX models:"]
-        for index, model in enumerate(AVAILABLE_MODELS, start=1):
+        models = local_available_models((self.config.model.model,))
+        for index, model in enumerate(models, start=1):
             marker = "*" if model == self.config.model.model else " "
             lines.append(f"  {marker} {index}. {model}")
         lines.extend(
             [
                 "",
                 "Use /model N to switch by number, or /model HF_REPO to use a custom MLX model.",
+                "Use /model scan to discover downloaded MLX-LM models.",
                 f"Current: {self.config.model.backend}:{self.config.model.model}",
             ]
         )
+        return "\n".join(lines)
+
+    def scan_models(self) -> str:
+        models = discover_mlx_models()
+        state_path = save_local_model_state_with_models(self.config, models)
+        if not models:
+            return "\n".join(
+                [
+                    "No downloaded MLX-LM models were found in the Hugging Face cache.",
+                    f"Saved global model state to {state_path}",
+                ]
+            )
+        lines = [
+            f"Discovered {len(models)} downloaded MLX-LM model(s):",
+            *[f"  {index}. {model}" for index, model in enumerate(models, start=1)],
+            "",
+            f"Saved global model state to {state_path}",
+            "Use /model N to switch to one of the listed models.",
+        ]
         return "\n".join(lines)
 
     def switch_model(self, selector: str) -> str:
@@ -217,9 +246,10 @@ class TerminalUI:
     def _resolve_model_selector(self, selector: str) -> str:
         if selector.isdigit():
             index = int(selector)
-            if not 1 <= index <= len(AVAILABLE_MODELS):
-                raise ValueError(f"Model index must be between 1 and {len(AVAILABLE_MODELS)}.")
-            return AVAILABLE_MODELS[index - 1]
+            models = local_available_models((self.config.model.model,))
+            if not 1 <= index <= len(models):
+                raise ValueError(f"Model index must be between 1 and {len(models)}.")
+            return models[index - 1]
         return selector
 
     def _resolve_path(self, value: str) -> Path:

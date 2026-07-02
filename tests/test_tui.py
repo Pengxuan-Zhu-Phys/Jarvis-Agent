@@ -1,13 +1,14 @@
+import asyncio
 import io
 import os
 import tempfile
+import threading
 import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from jarvis_agent import textual_tui
 from jarvis_agent.agent_actions import INDEX_ACTION_MARKER, detect_agent_action
 from jarvis_agent.config import AVAILABLE_MODELS, AgentConfig, JARVIS_HOME_ENV, ModelConfig, ProjectConfig, compact_model_name, model_badge_name
 from jarvis_agent.session import SessionStore
@@ -30,6 +31,8 @@ from jarvis_agent.textual_tui import (
     text_index_to_location,
     wrap_plain_text,
 )
+from jarvis_agent.textual_tui.output.transcript import TranscriptView
+from jarvis_agent.textual_tui.output.widgets import AssistantBlock, ErrorBlock, SummaryBlock, UserBlock
 
 
 class FakeEngine:
@@ -132,6 +135,19 @@ class TUITests(unittest.TestCase):
         self.assertIn(AVAILABLE_MODELS[1], response.output)
         self.assertEqual(tui.config.model.model, AVAILABLE_MODELS[1])
 
+    def test_model_scan_discovers_and_saves_models(self) -> None:
+        tui, _ = self.make_tui()
+
+        with patch("jarvis_agent.tui.discover_mlx_models", return_value=("mlx-community/New-Coder-4bit",)):
+            response = tui.dispatch("/model scan")
+
+        self.assertIn("Discovered 1 downloaded MLX-LM model", response.output)
+        self.assertIn("mlx-community/New-Coder-4bit", response.output)
+        self.assertIn("Saved global model state", response.output)
+
+        menu = tui.dispatch("/model").output
+        self.assertIn("mlx-community/New-Coder-4bit", menu)
+
     def test_plain_text_is_sent_to_model(self) -> None:
         tui, engine = self.make_tui()
 
@@ -142,6 +158,15 @@ class TUITests(unittest.TestCase):
         self.assertEqual(len(engine.prompts), 1)
         self.assertIn("User: explain this package", engine.prompts[0])
         self.assertIn("User: explain this package", output.getvalue())
+
+    def test_dispatch_can_skip_session_recording(self) -> None:
+        tui, _ = self.make_tui()
+
+        response = tui.dispatch("do not record this", record=False)
+
+        self.assertIn("answer:", response.output)
+        transcript = tui.dispatch("/resume latest").output
+        self.assertNotIn("do not record this", transcript)
 
     def test_natural_language_index_intent_runs_index_action(self) -> None:
         tui, engine = self.make_tui()
@@ -202,252 +227,216 @@ class TUITests(unittest.TestCase):
         self.assertIn("explain this package", transcript)
         self.assertIn("User: explain this package", transcript)
 
-    def test_textual_home_uses_round_dot_monitor(self) -> None:
-        source = Path(textual_tui.__file__).read_text(encoding="utf-8")
+    def test_textual_home_mounts_logo_monitor(self) -> None:
+        from jarvis_agent.textual_tui.app import JarvisAgentApp
 
-        self.assertIn("⬤", source)
-        self.assertIn("left_background = \"#2f7fd8\"", source)
-        self.assertIn("left_active = \"#ffffff\"", source)
-        self.assertIn("right_background = \"#134a8d\"", source)
-        self.assertIn("right_active = \"#f6d33f\"", source)
-        self.assertIn("width: 16;", source)
-        self.assertIn("height: 8;", source)
-        self.assertIn("content-align: left top;", source)
-        self.assertIn("margin-top: 3;", source)
-        self.assertIn("border: round #4f7cff;", source)
-        self.assertIn("border: round #303745;", source)
-        self.assertNotIn("██[/]", source)
-        self.assertIn("TEXT_GRADIENT_COLORS", source)
-        self.assertIn("render_colored_version_lines", source)
-        self.assertIn("render_home_panel", source)
-        self.assertIn("COMMAND_CHOICES", source)
-        self.assertIn("ListView(id=\"suggestions\")", source)
-        self.assertIn("ListView(id=\"turn-history\")", source)
-        self.assertIn("PromptTextArea", source)
-        self.assertIn("PromptTextArea(", source)
-        self.assertIn("on_text_area_changed", source)
-        self.assertIn("PROMPT_MAX_LINES = 5", source)
-        self.assertIn("update_composer_height", source)
-        self.assertIn("prompt_visual_line_count", source)
-        self.assertIn("show_vertical_scrollbar = total_lines > self.PROMPT_MAX_LINES", source)
-        self.assertIn("composer.styles.height = visible_lines + 2", source)
-        self.assertIn("event.key == \"shift+enter\"", source)
-        self.assertNotIn("event.key == \"ctrl+j\"", source)
-        self.assertIn("submit_prompt", source)
-        self.assertIn("Model is busy. Finish the current response before submitting another prompt.", source)
-        self.assertIn("show_notice", source)
-        self.assertIn("update_notice_status", source)
-        self.assertIn("Static(\"\", id=\"notice\")", source)
-        self.assertIn("#notice", source)
-        self.assertIn("notice.styles.margin = (0, 2, composer_height + 1, 2)", source)
-        self.assertNotIn("query_one(\"#thinking\", Static).update(\"↳ Model is busy", source)
-        self.assertNotIn("prompt_input.disabled = True", source)
-        self.assertNotIn("prompt_input.disabled = False", source)
-        self.assertIn("on_key", source)
-        self.assertIn("event.key == \"tab\"", source)
-        self.assertIn("set_prompt_value", source)
-        self.assertIn("text_index_to_location", source)
-        self.assertIn("location_to_text_index", source)
-        self.assertIn("event.key in {\"up\", \"down\"}", source)
-        self.assertIn("choose_model_suggestion", source)
-        self.assertIn("on_list_view_selected", source)
-        self.assertIn("Thinking...", source)
-        self.assertIn("threading.Thread", source)
-        self.assertIn("auto_copy_selection", source)
-        self.assertIn("copy_to_clipboard(selection)", source)
-        self.assertIn("Copied selection", source)
-        self.assertIn("Screen > .screen--selection", source)
-        self.assertIn("background: #F6D33E;", source)
-        self.assertIn("background: rgba(39, 51, 73, 0.3);", source)
-        self.assertNotIn("background: #273349;", source)
-        self.assertNotIn("background: #ffe45c;", source)
-        self.assertIn("color: #101216;", source)
-        self.assertIn("render_turn_panel", source)
-        self.assertIn("render_model_info", source)
-        self.assertIn("model_badge_name", source)
-        self.assertIn("id=\"composer\"", source)
-        self.assertIn("border: round #6d5cae;", source)
-        self.assertIn("padding: 1 2 6 2;", source)
-        self.assertIn("layers: base popup composer;", source)
-        self.assertIn("dock: bottom;", source)
-        self.assertIn("layer: composer;", source)
-        self.assertIn("layer: popup;", source)
-        self.assertIn("margin: 0 2 3 2;", source)
-        self.assertIn("margin: 0 2 4 2;", source)
-        self.assertIn("#output-metrics", source)
-        self.assertIn("Static(\"\", id=\"output-metrics\")", source)
-        self.assertIn("width: auto;", source)
-        self.assertIn("margin: 0 0 6 0;", source)
-        self.assertIn("#pacman-ghosts", source)
-        self.assertIn("Static(\"\", id=\"pacman-ghosts\")", source)
-        self.assertIn("width: 28;", source)
-        self.assertIn("margin: 0 0 3 0;", source)
-        self.assertIn("#ghost-clock", source)
-        self.assertIn("Static(\"\", id=\"ghost-clock\")", source)
-        self.assertIn("width: 10;", source)
-        self.assertIn("id=\"prompt-icon\"", source)
-        self.assertIn("Static(\"❱\", id=\"prompt-icon\")", source)
-        self.assertIn("border-subtitle-align: right;", source)
-        self.assertIn("border-subtitle-color: #8d93a1;", source)
-        self.assertIn("border-subtitle-background: transparent;", source)
-        self.assertIn("update_composer_caption", source)
-        self.assertIn("border_subtitle", source)
-        self.assertIn("#git-status-info", source)
-        self.assertIn("#repo-path-info", source)
-        self.assertIn("#repo-path-info:hover", source)
-        self.assertIn("copy_project_path", source)
-        self.assertIn("render_git_status_info", source)
-        self.assertIn("render_repo_path_info", source)
-        self.assertIn("repo_path_max_chars", source)
-        self.assertIn("update_repo_path_info", source)
-        self.assertIn("overlay: screen;", source)
-        self.assertIn("border: round #303745;", source)
-        self.assertIn("width: 76;", source)
-        self.assertIn("constrain: inside inside;", source)
-        self.assertIn("position_suggestions", source)
-        self.assertIn("suggestions.styles.offset", source)
-        self.assertIn("slash_suggestion_context", source)
-        self.assertIn("suggestion_start", source)
-        self.assertIn("suggestion_end", source)
-        self.assertIn("replace_suggestion_token", source)
-        self.assertIn("#context-info", source)
-        self.assertIn("#todo-info", source)
-        self.assertIn("CONTEXT_LIMIT_TOKENS", source)
-        self.assertIn("render_repo_info", source)
-        self.assertIn("render_context_info", source)
-        self.assertIn("render_context_progress", source)
-        self.assertIn("context_info.is_mouse_over", source)
-        self.assertIn("measured_context_tokens", source)
-        self.assertIn("parse_context_metric_tokens", source)
-        self.assertIn("self.measured_context_tokens = context_tokens", source)
-        self.assertIn("context_tokens: int | None = None", source)
-        self.assertIn("record.context_tokens", source)
-        self.assertIn("width: 12;", source)
-        self.assertIn("min-width: 12;", source)
-        self.assertIn("CONTEXT_LIMIT_TOKENS = 2048", source)
-        self.assertIn("label.rjust(self.context_info_width())", source)
-        self.assertIn("Text(label.rjust(width)", source)
-        self.assertIn("(self.output_raw_text, self.thinking_prompt)", source)
-        self.assertNotIn("(self.output_raw_text, self.thinking_prompt, self.response_text)", source)
-        self.assertIn("on #4A3F13", source)
-        self.assertIn("set_interval(0.20, self.update_context_info)", source)
-        self.assertIn("context_info.tooltip = None", source)
-        self.assertIn("render_todo_info", source)
-        self.assertIn("toggle_todo_panel", source)
-        self.assertIn("TurnRecord", source)
-        self.assertIn("created_at", source)
-        self.assertIn("metrics: str", source)
-        self.assertIn("start_new_turn", source)
-        self.assertIn("reset_output_box", source)
-        self.assertIn("update_current_turn_output", source)
-        self.assertIn("refresh_history_panel", source)
-        self.assertIn("history.border_title = \" Turns \"", source)
-        self.assertIn("selected_index = self.current_turn_index", source)
-        self.assertIn("visible_records = [(selected_index + 1, self.turn_records[selected_index])]", source)
-        self.assertIn("if self.history_expanded and event.key == \"enter\"", source)
-        self.assertIn("expanded_turn_prompts", source)
-        self.assertIn("toggle_history_prompt", source)
-        self.assertIn("toggle_history_prompt_by_turn_index", source)
-        self.assertIn("suppress_next_history_selection", source)
-        self.assertIn("history_prompt_needs_expansion", source)
-        self.assertIn("wrap_plain_text(record.prompt", source)
-        self.assertIn("history_toggle_label", source)
-        self.assertIn("history_index_label", source)
-        self.assertIn("Static(self.history_toggle_label(index, expanded=True), name=str(index - 1), classes=\"history-toggle\")", source)
-        self.assertIn("background: rgba(19, 74, 141, 0.5);", source)
-        self.assertIn(".history-toggle", source)
-        self.assertIn(".history-index", source)
-        self.assertIn("classes=\"history-toggle\" if expandable else \"history-index\"", source)
-        self.assertIn("Static(self.history_toggle_label(index, expanded=True), classes=\"history-toggle-placeholder\")", source)
-        self.assertIn("if \"history-toggle\" in widget_classes:", source)
-        self.assertNotIn("classes=\"history-prompt history-expandable\" if expandable else \"history-prompt\"", source)
-        self.assertNotIn("def render_history_record", source)
-        self.assertIn("self.history_record_row(index, record, expandable=expandable)", source)
-        self.assertIn(".history-row", source)
-        self.assertIn(".history-prompt", source)
-        self.assertIn(".history-time", source)
-        self.assertIn("history_record_row", source)
-        self.assertIn("Static(relative, classes=\"history-time\")", source)
-        self.assertIn("history_expanded", source)
-        self.assertIn("history_pinned", source)
-        self.assertIn("self.history_pinned = True", source)
-        self.assertIn("action_toggle_history", source)
-        self.assertIn("collapse_history", source)
-        self.assertIn("event.key == \"escape\"", source)
-        self.assertIn("(\"ctrl+h\", \"toggle_history\", \"History\")", source)
-        self.assertIn("_relative_time_label", source)
-        self.assertIn("_exact_time_label", source)
-        self.assertIn("exit_on_error=False", source)
-        self.assertIn("history.is_mounted", source)
-        self.assertIn("apply_history_selection", source)
-        self.assertIn("self.history_pinned = False", source)
-        self.assertIn("self.history_expanded = False", source)
-        self.assertIn("show_output_snapshot", source)
-        self.assertIn("log.border_title = \"\"", source)
-        self.assertNotIn("log.border_title = f\" {raw} \"", source)
-        self.assertNotIn("log.border_title = f\" {title} \"", source)
-        self.assertIn("split_output_metrics", source)
-        self.assertIn("split_output_metrics_detail", source)
-        self.assertIn("compact_metrics", source)
-        self.assertIn("set_output_metrics", source)
-        self.assertIn("update_output_metrics_caption", source)
-        self.assertIn("clear_output_metrics_caption", source)
-        self.assertIn("refresh_output_metrics_visibility", source)
-        self.assertIn("output_metrics_display_text", source)
-        self.assertIn("position_output_metrics_caption", source)
-        self.assertIn("caption.styles.offset", source)
-        self.assertIn("animate_pacman_ghosts", source)
-        self.assertIn("set_interval(0.35, self.animate_pacman_ghosts)", source)
-        self.assertIn("render_pacman_ghosts", source)
-        self.assertIn("position_pacman_ghosts", source)
-        self.assertIn("GHOST_TRACK_SPACES = 15", source)
-        self.assertIn("GHOST_WIDTH = 28", source)
-        self.assertIn("GHOST_CLOCK_WIDTH = 10", source)
-        self.assertIn("set_interval(1.0, self.update_ghost_clock)", source)
-        self.assertIn("update_ghost_clock", source)
-        self.assertIn("position_ghost_clock", source)
-        self.assertIn("clock.update(current_time_label())", source)
-        self.assertIn("pacman_ghost_frame", source)
-        self.assertIn("ping_pong_offset", source)
-        self.assertIn("👻 👻 👻", source)
-        self.assertIn("is_generation_active", source)
-        self.assertIn("History preview is paused", source)
-        self.assertIn("metrics_detail", source)
-        self.assertIn("set_chat_visible", source)
-        self.assertIn("tooltip", source)
-        self.assertIn("is_mouse_over", source)
-        self.assertIn("get_git_info", source)
-        self.assertIn("_home_relative_path", source)
-        self.assertIn("_compact_middle_path", source)
-        self.assertIn("_format_token_count", source)
-        self.assertIn("Log(id=\"log\", highlight=False)", source)
-        self.assertIn("show_horizontal_scrollbar = False", source)
-        self.assertIn("scrollbar-size-horizontal: 0;", source)
-        self.assertIn("on_resize", source)
-        self.assertIn("reflow_output", source)
-        self.assertIn("output_raw_text", source)
-        self.assertIn("write_wrapped_output", source)
-        self.assertIn("output_wrap_width", source)
-        self.assertIn("wrap_output_text", source)
-        self.assertIn("cell_len", source)
-        self.assertIn("start_response_stream", source)
-        self.assertIn("update_response_stream", source)
-        self.assertIn("ARC_SPINNER_FRAMES", source)
-        self.assertIn("(\"◜\", \"◟\", \"◞\", \"◝\")", source)
-        self.assertIn("Responding...", source)
-        self.assertIn("f\"{frame} Responding...", source)
-        self.assertNotIn("↳ Responding...", source)
-        self.assertIn("tokens/sec", source)
-        self.assertNotIn("chars/s", source)
-        self.assertIn("RESPONSE_STREAM_SECONDS_PER_CHAR", source)
-        self.assertNotIn("Markdown(output)", source)
-        self.assertNotIn("/version", source)
-        self.assertIn("/home", source)
-        self.assertIn("/model", source)
-        self.assertIn("/resume", source)
-        self.assertIn("#topbar", source)
-        self.assertNotIn("#model-info", source)
-        self.assertNotIn("query_one(\"#turn\", Static)", source)
+        config, _, _ = self.make_textual_app_parts()
+
+        async def run_smoke() -> None:
+            async with JarvisAgentApp(config).run_test() as pilot:
+                await pilot.pause()
+                logo = pilot.app.query_one("#logo-monitor")
+                home = pilot.app.query_one("#home-panel")
+                self.assertIn("⬤", str(logo.render()))
+                home_text = str(home.render())
+                self.assertIn("Just a Robust and Versatile Interface Suite for HEP", home_text)
+                self.assertIn("Version:", home_text)
+
+        asyncio.run(run_smoke())
+
+    def test_textual_submit_prompt_appends_user_and_assistant_blocks(self) -> None:
+        from jarvis_agent.textual_tui.app import JarvisAgentApp
+
+        config, engine, store = self.make_textual_app_parts()
+        engine.model_response = "answer\n```python\nprint('ok')\n```"
+
+        async def run_smoke() -> None:
+            async with JarvisAgentApp(config).run_test() as pilot:
+                pilot.app.ui = TerminalUI(config, engine=engine, session_store=store, session_id="textual-test")
+                pilot.app.RESPONSE_STREAM_SECONDS_PER_CHAR = 0.0001
+                prompt = pilot.app.query_one("#prompt")
+                prompt.load_text("hello")
+                pilot.app.submit_prompt()
+                for _ in range(80):
+                    await pilot.pause(0.01)
+                    if not pilot.app.is_generation_active():
+                        break
+                transcript = pilot.app.query_one("#log", TranscriptView)
+                self.assertEqual(len(transcript.query(UserBlock).nodes), 1)
+                self.assertEqual(len(transcript.query(AssistantBlock).nodes), 1)
+                self.assertEqual(pilot.app.query_one("#stop-button").styles.display, "none")
+                self.assertIn(":", str(pilot.app.query_one("#token-counter").render()))
+                transcript_text = store.format_transcript("textual-test")
+                self.assertIn("user\nhello", transcript_text)
+                self.assertIn("assistant\nanswer", transcript_text)
+
+        asyncio.run(run_smoke())
+
+    def test_textual_thinking_status_is_compact_with_input_tokens(self) -> None:
+        from jarvis_agent.textual_tui.app import JarvisAgentApp
+
+        config, _, _ = self.make_textual_app_parts()
+
+        async def run_smoke() -> None:
+            async with JarvisAgentApp(config).run_test() as pilot:
+                pilot.app.thinking_started_at = time.monotonic() - 1.2
+                pilot.app.thinking_context_tokens = 12
+                pilot.app.update_thinking_status()
+                await pilot.pause()
+
+                status = str(pilot.app.query_one("#thinking").render())
+                self.assertIn("Thinking...", status)
+                self.assertIn("1.", status)
+                self.assertNotIn("context", status)
+                self.assertNotIn("max gen", status)
+                self.assertIn("↑12", str(pilot.app.query_one("#token-counter").render()))
+                self.assertEqual(pilot.app.query_one("#stop-button").styles.display, "block")
+
+        asyncio.run(run_smoke())
+
+    def test_textual_run_control_right_aligns_with_composer(self) -> None:
+        from jarvis_agent.textual_tui.app import JarvisAgentApp
+
+        config, _, _ = self.make_textual_app_parts()
+
+        async def run_smoke() -> None:
+            async with JarvisAgentApp(config).run_test(size=(120, 30)) as pilot:
+                pilot.app.update_run_control()
+                await pilot.pause()
+
+                composer = pilot.app.query_one("#composer")
+                run_control = pilot.app.query_one("#run-control")
+                composer_right = composer.region.x + composer.region.width
+                run_control_right = run_control.region.x + run_control.region.width
+                self.assertEqual(run_control_right, composer_right)
+
+        asyncio.run(run_smoke())
+
+    def test_textual_stop_button_cancels_response_stream(self) -> None:
+        from jarvis_agent.textual_tui.app import JarvisAgentApp
+
+        config, engine, store = self.make_textual_app_parts()
+        engine.model_response = "\n".join(f"line {index}" for index in range(300))
+
+        async def run_smoke() -> None:
+            async with JarvisAgentApp(config).run_test() as pilot:
+                pilot.app.ui = TerminalUI(config, engine=engine, session_store=store, session_id="textual-test")
+                pilot.app.RESPONSE_STREAM_SECONDS_PER_CHAR = 0.01
+                prompt = pilot.app.query_one("#prompt")
+                prompt.load_text("hello")
+                pilot.app.submit_prompt()
+                while pilot.app.thinking_started_at is not None:
+                    await pilot.pause(0.01)
+                await pilot.pause(0.02)
+                self.assertTrue(pilot.app.is_generation_active())
+                self.assertEqual(pilot.app.query_one("#stop-button").styles.display, "block")
+                self.assertIn("↓", str(pilot.app.query_one("#token-counter").render()))
+                self.assertNotIn("|", str(pilot.app.query_one("#thinking").render()))
+
+                pilot.app.stop_generation()
+                await pilot.pause()
+
+                self.assertFalse(pilot.app.is_generation_active())
+                self.assertEqual(pilot.app.query_one("#stop-button").styles.display, "none")
+                self.assertIn(":", str(pilot.app.query_one("#token-counter").render()))
+
+        asyncio.run(run_smoke())
+
+    def test_textual_stop_thinking_ignores_stale_background_result(self) -> None:
+        from jarvis_agent.textual_tui.app import JarvisAgentApp
+
+        class BlockingEngine(FakeEngine):
+            def __init__(self) -> None:
+                super().__init__()
+                self.first_started = threading.Event()
+                self.release_first = threading.Event()
+
+            def ask_model(self, prompt: str) -> str:
+                self.prompts.append(prompt)
+                if len(self.prompts) == 1:
+                    self.first_started.set()
+                    self.release_first.wait(timeout=2)
+                    return "first answer should be ignored"
+                return "second answer"
+
+        config, _, store = self.make_textual_app_parts()
+        engine = BlockingEngine()
+
+        async def run_smoke() -> None:
+            async with JarvisAgentApp(config).run_test() as pilot:
+                pilot.app.ui = TerminalUI(config, engine=engine, session_store=store, session_id="textual-test")
+                pilot.app.RESPONSE_STREAM_SECONDS_PER_CHAR = 0.0001
+                prompt = pilot.app.query_one("#prompt")
+                prompt.load_text("first prompt")
+                pilot.app.submit_prompt()
+                for _ in range(100):
+                    if engine.first_started.is_set():
+                        break
+                    await pilot.pause(0.01)
+                self.assertTrue(engine.first_started.is_set())
+                self.assertTrue(pilot.app.is_generation_active())
+
+                pilot.app.stop_generation()
+                await pilot.pause()
+                self.assertFalse(pilot.app.is_generation_active())
+
+                prompt.load_text("second prompt")
+                pilot.app.submit_prompt()
+                for _ in range(100):
+                    await pilot.pause(0.01)
+                    if not pilot.app.is_generation_active() and len(engine.prompts) >= 2:
+                        break
+                engine.release_first.set()
+                await pilot.pause(0.05)
+
+                transcript_text = store.format_transcript("textual-test")
+                self.assertIn("second prompt", transcript_text)
+                self.assertIn("second answer", transcript_text)
+                self.assertNotIn("first prompt", transcript_text)
+                self.assertNotIn("first answer should be ignored", transcript_text)
+
+        try:
+            asyncio.run(run_smoke())
+        finally:
+            engine.release_first.set()
+
+    def test_textual_index_and_unknown_commands_render_structured_blocks(self) -> None:
+        from jarvis_agent.textual_tui.app import JarvisAgentApp
+
+        config, engine, store = self.make_textual_app_parts()
+
+        async def run_smoke() -> None:
+            async with JarvisAgentApp(config).run_test() as pilot:
+                pilot.app.ui = TerminalUI(config, engine=engine, session_store=store, session_id="textual-test")
+                pilot.app.process_raw("/index")
+                await pilot.pause()
+                transcript = pilot.app.query_one("#log", TranscriptView)
+                self.assertEqual(len(transcript.query(UserBlock).nodes), 1)
+                self.assertEqual(len(transcript.query(SummaryBlock).nodes), 1)
+
+                pilot.app.process_raw("/nope")
+                await pilot.pause()
+                transcript = pilot.app.query_one("#log", TranscriptView)
+                self.assertEqual(len(transcript.query(UserBlock).nodes), 1)
+                self.assertEqual(len(transcript.query(ErrorBlock).nodes), 1)
+
+        asyncio.run(run_smoke())
+
+    def make_textual_app_parts(self) -> tuple[AgentConfig, FakeEngine, SessionStore]:
+        home_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(home_dir.cleanup)
+        env_patch = patch.dict(os.environ, {JARVIS_HOME_ENV: home_dir.name})
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+        config = AgentConfig(
+            project=ProjectConfig(root=Path("/tmp/hep-package"), name="hep-package"),
+            model=ModelConfig(model="local-model"),
+        )
+        engine = FakeEngine()
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        store = SessionStore(Path(temp_dir.name) / "sessions.jsonl")
+        return config, engine, store
 
     def test_estimate_context_tokens(self) -> None:
         self.assertEqual(estimate_context_tokens(""), 0)
