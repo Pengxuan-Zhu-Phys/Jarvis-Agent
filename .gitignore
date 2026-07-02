@@ -55,5 +55,6 @@ temp/
 .DS_Store
 .idea/
 .vscode/
+docs/.obsidian/
 *.swp
 *.swo
